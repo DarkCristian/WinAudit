@@ -68,6 +68,18 @@ Get-Command Get-ADComputer
 
 Then start WinAudit and choose **[4] Active Directory computer inventory**. Example input: `dc01.ad.example.com`; optional search base: `OU=Workstations,DC=ad,DC=example,DC=com`. Credentials must be authorized for the directory.
 
+## One-command launch (no clone required)
+
+From Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/DarkCristian/WinAudit/main/install.ps1 | iex
+```
+
+The launcher downloads the main script and required modules from this repository into a temporary directory, runs the interactive menu, then removes those temporary files. It does not install RSAT or enable WinRM. JSON reports are written outside the temporary directory.
+
+**Security warning:** `irm | iex` executes downloaded code directly. Only use it if you trust the repository and its current `main` branch. For a reviewable and reproducible execution, download the files, inspect them, and use a specific commit rather than a mutable branch.
+
 ## Run
 
 ```powershell

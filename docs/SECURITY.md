@@ -1,6 +1,6 @@
 # Modelo de seguridad y limitaciones
 
-Referencia de **WinAudit v0.4.0-alpha**, herramienta de consulta y recopilación de evidencia para Windows. No es un antivirus, EDR ni una herramienta completa de adquisición forense.
+Referencia de **main revisado el 05/11/2026**, posterior a v0.4.0-alpha. El asset anterior no incorpora estas correcciones. WinAudit es una herramienta de consulta y recopilación de evidencia para Windows. No es un antivirus, EDR ni una herramienta completa de adquisición forense.
 
 [Volver al README](../README.md) · [Guía de uso](USAGE.md)
 
@@ -126,7 +126,7 @@ Los informes pueden incluir hostnames, usuarios, rutas, argumentos, DN, eventos 
 
 El código y los ejemplos del repositorio utilizan valores ficticios. Eso no anonimiza automáticamente los informes reales. Antes de compartir evidencia, revisá qué datos contiene y eliminá o anonimiza lo que no deba divulgarse.
 
-La ejecución por IRM descarga código de `main`, una rama modificable, y no fija/verifica el checksum de una release. Para reproducibilidad, revisá el código del tag o el asset publicado y comprobá su SHA-256 por un canal de confianza. Un checksum identifica los bytes: no reemplaza una firma del editor ni es por sí solo una garantía de seguridad.
+El launcher descarga un único standalone desde un commit inmutable y compara un SHA-256 fijado antes de ejecutarlo; no sigue redirecciones, usa timeout y `-UseBasicParsing`. Mantiene un handle de solo lectura sin compartir escritura/borrado durante la validación y ejecución. El primer `irm | iex` sigue confiando en el propio launcher de `main`: descargalo y revisalo o fijá una revisión aprobada. El hash interno no autentica al launcher ni sustituye una firma del editor.
 
 El tag v0.4.0-alpha y sus assets permanecen fijados a la publicación. Corregir documentación en `main` no actualiza esos binarios ni cambia el código del tag.
 
@@ -149,3 +149,13 @@ No constituye una prueba contra un DC real, validación de certificados de una o
 ## Reportar vulnerabilidades
 
 Usá un aviso privado de seguridad de GitHub cuando esté disponible. No incluyas claves, contraseñas, logs privados ni identificadores corporativos en issues públicos. Los problemas operativos sin datos sensibles pueden describirse con pasos reproducibles y valores ficticios.
+
+## Endurecimiento de main (05/11/2026)
+
+[Revisión de seguridad y CVE del runtime](SECURITY_REVIEW.md). Se rechazan rutas UNC, dispositivos, ADS, unidades de red y componentes reparse/junction antes de leer evidencia o escribir informes. Se crean nuevos informes con CreateNew para no sobrescribir archivos existentes. No hay aislamiento frente a un administrador local ni una garantía contra carreras de reemplazo de directorios por un atacante con permisos de escritura. Las ACL se heredan: no se cifra evidencia ni se configura una ACL privada automáticamente.
+
+El XML de eventos usa XmlReader con DTD prohibido, resolver nulo y máximo de 4 Mi caracteres. La presentación de texto elimina controles C0/C1 y marcas bidi; JSON/XML crudos se preservan y deben abrirse como datos no confiables.
+
+Las consultas de eventos tienen tope por registro/lectura (10000 predeterminado, 100000 máximo), retienen primero los más recientes y explicitan el estado Limitado. No limitan todo el consumo de disco de una captura larga. LDAP directo limita páginas además de equipos y timeout; un exceso falla explícitamente.
+
+Se rechazan ramas antiguas de PowerShell 7 y versiones anteriores a 7.4.21 / 7.5.12 / 7.6.7 según la rama. PowerShell 5.1 requiere Windows actualizado: su número de versión no demuestra que estén instaladas todas las KB. Una rama posterior a 7.6 genera advertencia porque no fue evaluada en este relevamiento. Estos controles no parchean Windows, .NET ni PowerShell y no garantizan ausencia de vulnerabilidades futuras.

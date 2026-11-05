@@ -162,7 +162,7 @@ Consulta el [modelo de seguridad](SECURITY.md) para conocer el almacenamiento de
 
 ## Descubrimiento de AD por LDAP/LDAPS y consulta WinRM
 
-Esta ampliacion esta en `main` y en su standalone actual; el asset publicado de `v0.3.0-alpha` conserva la version anterior.
+Esta ampliacion esta incluida en `v0.4.0-alpha`, tanto en el asset standalone como en el codigo del tag.
 
 LDAP/LDAPS descubre objetos de equipo del directorio. WinRM consulta procesos en el equipo elegido. Un objeto habilitado en AD no prueba que este encendido ni accesible por WinRM.
 

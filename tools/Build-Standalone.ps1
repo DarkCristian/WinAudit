@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param([switch]$Check)
 $root = Split-Path -Parent $PSScriptRoot
-$entry = Get-Content -LiteralPath (Join-Path $root 'WinAudit.ps1') -Raw
+$entry = (Get-Content -LiteralPath (Join-Path $root 'WinAudit.ps1') -Raw).Replace("`r`n","`n")
 $marker = 'function Show-Header {'
 $index = $entry.IndexOf($marker, [StringComparison]::Ordinal)
 if ($index -lt 0) { throw 'No se encontro el comienzo de la interfaz.' }

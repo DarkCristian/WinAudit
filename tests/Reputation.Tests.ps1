@@ -66,7 +66,7 @@ try {
     [IO.File]::WriteAllText($path,'abc',(New-Object Text.UTF8Encoding($false)))
     & $module {$script:ResponseMode='success'}
     $ctx=New-WAVirusTotalContext -ApiKey $key
-    $nodes=@{one=[pscustomobject]@{ExecutablePath=$path;MD5='900150983CD24FB0D6963F7D28E17F72'}}
+    $nodes=@{one=[pscustomobject]@{ExecutablePath=$path;MD5='900150983CD24FB0D6963F7D28E17F72';SHA256='BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD'}}
     $before=& $module {$script:Calls}
     Add-WAVirusTotalToProcesses -Nodes $nodes
     Assert-VT ((& $module {$script:Calls}) -eq $before -and -not $nodes.one.PSObject.Properties['VirusTotal']) 'Sin contexto no debe calcular ni consultar reputacion.'
@@ -75,6 +75,9 @@ try {
     [IO.File]::WriteAllText($path,'changed',(New-Object Text.UTF8Encoding($false)))
     $before=& $module {$script:Calls}
     Add-WAVirusTotalToProcesses -Nodes $nodes -Context $ctx
-    Assert-VT ($nodes.one.VirusTotal.State -eq 'EvidenciaNoDisponible' -and (& $module {$script:Calls}) -eq $before) 'Un archivo cambiado no debe asociarse al hash capturado.'
+    Assert-VT ($nodes.one.VirusTotal.State -eq 'Encontrado' -and $nodes.one.VirusTotal.Cached -and (& $module {$script:Calls}) -eq $before) 'Debe consultar el hash preservado, no reemplazarlo por el archivo modificado.'
+    $nodes.one.SHA256=$null
+    Add-WAVirusTotalToProcesses -Nodes $nodes -Context $ctx
+    Assert-VT ($nodes.one.VirusTotal.State -eq 'EvidenciaNoDisponible' -and (& $module {$script:Calls}) -eq $before) 'Sin SHA256 capturado no debe enviarse una consulta.'
 } finally {Remove-Item -LiteralPath $temp -Recurse -Force}
 Write-Host 'PASS VirusTotal: red simulada, opt-in, cache, limites, errores y privacidad.'

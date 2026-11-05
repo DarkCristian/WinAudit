@@ -31,11 +31,13 @@ param(
     [Alias('Start')][object]$StartTime,
     [Alias('End')][object]$EndTime,
     [ValidateRange(1,300)][int]$PollSeconds = 5,
+    [ValidateRange(1,100000)][int]$MaxEventsPerLog=10000,
     [string]$ReportDirectory = (Join-Path $env:USERPROFILE 'WinAudit-Reports')
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Root = $PSScriptRoot
+Import-Module (Join-Path $script:Root 'Modules\Security.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Reputation.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Core.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Events.psm1') -Force
@@ -75,7 +77,13 @@ function Read-EventWindow([switch]$Capture) {
 }
 function Show-Result($Data) {
     if ($null -eq $Data -or @($Data).Count -eq 0) { Write-Host 'Sin coincidencias. Revisa tambien la disponibilidad de los registros.' -ForegroundColor Yellow; return }
-    $Data | Format-Table -AutoSize | Out-Host
+    $Data | ForEach-Object {
+        $safe=[ordered]@{}
+        foreach ($property in $_.PSObject.Properties) {
+            $safe[$property.Name]=if ($property.Value -is [string]) {ConvertTo-WADisplayText $property.Value} else {$property.Value}
+        }
+        [pscustomobject]$safe
+    } | Format-Table -AutoSize | Out-Host
 }
 function Save-Report($Data, [string]$Name) {
     if ($null -eq $Data) { return }
@@ -100,7 +108,7 @@ function Invoke-LocalProcesses([string]$Name) {
 function Invoke-EventInvestigation {
     param([int]$TargetPid = 0,[string]$Name,[datetime]$From,[datetime]$Until,[switch]$Capture)
     if ($Capture) {
-        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds -VirusTotalContext $(if ($script:vtAutomatic) {$script:vtContext} else {$null}))
+        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds -MaxEventsPerLog $MaxEventsPerLog -VirusTotalContext $(if ($script:vtAutomatic) {$script:vtContext} else {$null}))
         return
     }
     if ($Until -gt (Get-Date)) { throw 'Para un fin futuro usa -Monitor o la opcion 7 del menu.' }
@@ -112,7 +120,7 @@ function Invoke-EventInvestigation {
         }
     })
     $status = New-Object 'System.Collections.Generic.List[object]'
-    $events = @(Get-WAEvents -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -QueryStatus $status)
+    $events = @(Get-WAEvents -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -QueryStatus $status -MaxEventsPerLog $MaxEventsPerLog)
     Show-Result ($events | Select-Object -First 35 TimeCreated,LogName,Id,MatchedField,Summary)
     Show-Result $status.ToArray()
     Save-Report ([pscustomobject]@{
@@ -177,14 +185,15 @@ function Invoke-FileEvidenceMenu {
     $algorithm = switch ($option) { '1' {'SHA256'} '2' {'MD5'} '3' {'Both'} default {throw 'Opcion invalida.'} }
     $evidence = Get-WAFileEvidence -Path $path -HashAlgorithm $algorithm
     Add-OptionalReputation -Evidence $evidence
-    $evidence | Format-List | Out-Host
+    Show-Result $evidence
     Save-Report $evidence 'file-evidence'
 }
 function Add-OptionalReputation {
     param([Parameter(Mandatory)]$Evidence)
     if (-not $script:vtAutomatic -or $null -eq $script:vtContext) { return }
     try {
-        $sha=(Get-FileHash -LiteralPath $Evidence.Path -Algorithm SHA256 -ErrorAction Stop).Hash
+        $localPath=Resolve-WALocalEvidencePath -Path $Evidence.Path
+        $sha=(Get-FileHash -LiteralPath $localPath -Algorithm SHA256 -ErrorAction Stop).Hash
         $report=Get-WAVirusTotalReport -SHA256 $sha -Context $script:vtContext
     } catch { $report=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No se pudo leer el hash; no se envio la consulta.'} }
     $Evidence | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $report -Force
@@ -210,7 +219,7 @@ function Invoke-VirusTotalMenu {
                 if ($null -eq $script:vtContext) {Write-Host 'Primero carga tu clave con opcion 1.'; continue}
                 $hash=Read-Host 'SHA-256 a enviar a VirusTotal'
                 $report=Get-WAVirusTotalReport -SHA256 $hash -Context $script:vtContext
-                $report | Format-List | Out-Host
+                Show-Result $report
                 Save-Report $report 'virustotal-reputation'
             }
             '3' {
@@ -223,6 +232,7 @@ function Invoke-VirusTotalMenu {
         }
     }
 }
+Assert-WASupportedRuntime
 $script:vtContext=$null
 $script:vtAutomatic=$false
 if ($VirusTotal) {
@@ -249,7 +259,7 @@ if ($FilePath) {
     if ($FindProcess -or $PIDToAudit -gt 0 -or $Monitor -or $ComputerName -or $FullScan -or $hasWindow) { throw '-FilePath solo admite -HashAlgorithm y -ReportDirectory.' }
     $evidence = Get-WAFileEvidence -Path $FilePath -HashAlgorithm $HashAlgorithm
     Add-OptionalReputation -Evidence $evidence
-    $evidence | Format-List | Out-Host
+    Show-Result $evidence
     Save-Report $evidence 'file-evidence'
     return
 }
@@ -299,6 +309,6 @@ while ($true) {
             '0' { return }
             default { Write-Host 'Opcion invalida.' -ForegroundColor Yellow }
         }
-    } catch { Write-Host ("Error: {0}" -f $_.Exception.Message) -ForegroundColor Red }
+    } catch { Write-Host (ConvertTo-WADisplayText ("Error: {0}" -f $_.Exception.Message)) -ForegroundColor Red }
     Pause-Menu
 }

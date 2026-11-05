@@ -37,6 +37,8 @@ SHA-256 de los bytes LF/UTF-8 sin BOM:
 
 El launcher mantiene abierto el archivo verificado sin compartir escritura/borrado hasta finalizar su ejecución. Su propio código sigue siendo una raíz de confianza: un atacante que controle el launcher podría cambiar tanto URL como hash. Revisá una copia aprobada o usá un commit fijado por un canal de confianza. No hay firma Authenticode del editor ni garantía frente a un administrador local, manipulación de la sesión o carreras de reemplazo de directorios con permisos de escritura.
 
+Validación del código y launcher corregidos: commit `18b426acfeadb5c66292a6573c4cf35c03bcb306`, [workflow aprobado en ambos PowerShell](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225). Los commits posteriores de esta revisión actualizan documentación.
+
 ## Pruebas y límites
 
 Las pruebas automatizadas en Windows PowerShell 5.1 y PowerShell 7 cubren versiones vulnerables/corregidas de ejemplo, rutas UNC y unidades mapeadas simuladas, junction real temporal, creación exclusiva, rechazo de DTD y XML sobredimensionado, controles de terminal, límites de eventos y descarga alterada sin ejecución. El caso de descarga válida usa el standalone del repositorio y verifica bloqueo de escritura y limpieza; HTTP se simula, sin credenciales reales.

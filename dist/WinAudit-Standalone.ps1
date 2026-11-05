@@ -11,6 +11,7 @@ param(
     [Alias('ProcessName')][ValidatePattern('^[^\\/:*?"<>|]+\.exe$')][string]$FindProcess,
     [string]$FilePath,
     [ValidateSet('SHA256','MD5','Both')][string]$HashAlgorithm = 'SHA256',
+    [switch]$VirusTotal,
     [switch]$Monitor,
     [switch]$FullScan,
     [string]$ComputerName,
@@ -22,6 +23,120 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Root = $PSScriptRoot
+
+
+function New-WAVirusTotalContext {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][securestring]$ApiKey)
+    if ($ApiKey.Length -eq 0) { throw 'La clave esta vacia.' }
+    # Solo memoria de la sesion. Este objeto nunca se exporta a informes.
+    return @{ApiKey=$ApiKey; Cache=@{}; LastRequestUtc=[datetime]::MinValue; BlockedUntilUtc=[datetime]::MinValue; Halted=$null; Requests=0; MaxRequests=100; MinIntervalSeconds=16}
+}
+function Get-WAVirusTotalReport {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$SHA256,[hashtable]$Context)
+    $hash=$SHA256.ToLowerInvariant()
+    $result=[pscustomobject]@{
+        SHA256=$hash; State='Desactivado'; Malicious=$null; Suspicious=$null; EnginesWithVerdict=$null
+        LastAnalysisUtc=$null; RetrievedAtUtc=$null; ReportUrl=('https://www.virustotal.com/gui/file/'+$hash)
+        Cached=$false; Detail='Integracion desactivada.'
+    }
+    if ($null -eq $Context) { return $result }
+    if ($Context.Cache.ContainsKey($hash)) {
+        $cached=$Context.Cache[$hash]
+        if ((Get-Date).ToUniversalTime() -lt $cached.ExpiresUtc) {
+            $copy=[ordered]@{}
+            foreach ($property in $cached.Result.PSObject.Properties) { $copy[$property.Name]=$property.Value }
+            $copy['Cached']=$true
+            return [pscustomobject]$copy
+        }
+    }
+    if ($Context.Halted) { $result.State=$Context.Halted; $result.Detail='Reconfigura la integracion para volver a consultar.'; return $result }
+    $now=(Get-Date).ToUniversalTime()
+    if ($now -lt $Context.BlockedUntilUtc -or $Context.Requests -ge $Context.MaxRequests) {
+        $result.State='LimiteAlcanzado'; $result.Detail='Consulta omitida por limite o pausa de cuota. No se reintenta automaticamente.'; return $result
+    }
+    $remaining=$Context.MinIntervalSeconds-($now-$Context.LastRequestUtc).TotalSeconds
+    if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Ceiling($remaining*1000)) }
+    $pointer=[IntPtr]::Zero
+    $headers=@{}
+    $plain=$null
+    try {
+        $pointer=[Runtime.InteropServices.Marshal]::SecureStringToBSTR($Context.ApiKey)
+        $plain=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+        $headers['x-apikey']=$plain
+        $Context.LastRequestUtc=(Get-Date).ToUniversalTime()
+        $Context.Requests++
+        # URL fija, solo GET por hash, sin archivos, sin seguir redirecciones.
+        $response=Invoke-RestMethod -Method Get -Uri ('https://www.virustotal.com/api/v3/files/'+$hash) -Headers $headers -MaximumRedirection 0 -TimeoutSec 20 -ErrorAction Stop -Verbose:$false -Debug:$false
+        $result.RetrievedAtUtc=(Get-Date).ToUniversalTime().ToString('o')
+        if (-not $response.PSObject.Properties['data']) { throw 'InvalidResponse' }
+        $data=$response.data
+        if (-not $data.PSObject.Properties['id'] -or [string]$data.id -ine $hash -or -not $data.PSObject.Properties['type'] -or $data.type -ne 'file' -or -not $data.PSObject.Properties['attributes']) { throw 'InvalidResponse' }
+        $attributes=$data.attributes
+        if (-not $attributes.PSObject.Properties['last_analysis_stats']) {
+            $result.State='SinAnalisisDisponible'; $result.Detail='El proveedor conoce el hash pero no devolvio estadisticas de analisis.'
+        } else {
+            $stats=$attributes.last_analysis_stats
+            $counts=@{}
+            foreach ($category in @('malicious','suspicious','harmless','undetected')) {
+                $number=0L
+                if (-not $stats.PSObject.Properties[$category] -or -not [long]::TryParse([string]$stats.$category,[ref]$number) -or $number -lt 0 -or $number -gt 100000) { throw 'InvalidResponse' }
+                $counts[$category]=$number
+            }
+            $result.Malicious=$counts.malicious; $result.Suspicious=$counts.suspicious
+            $result.EnginesWithVerdict=$counts.malicious+$counts.suspicious+$counts.harmless+$counts.undetected
+            if ($attributes.PSObject.Properties['last_analysis_date']) {
+                $result.LastAnalysisUtc=[DateTimeOffset]::FromUnixTimeSeconds([long]$attributes.last_analysis_date).UtcDateTime.ToString('o')
+            }
+            $result.State='Encontrado'
+            $result.Detail='Estadisticas del ultimo analisis disponible; no es un veredicto de WinAudit. Cero detecciones no garantiza seguridad.'
+        }
+        $Context.Cache[$hash]=@{Result=$result; ExpiresUtc=(Get-Date).ToUniversalTime().AddHours(1)}
+    } catch {
+        $status=0
+        $exception=$_.Exception
+        if ($exception.PSObject.Properties['Response'] -and $null -ne $exception.Response -and $exception.Response.PSObject.Properties['StatusCode']) {
+            $status=[int]$exception.Response.StatusCode
+        }
+        # Nunca imprimir excepcion, cuerpo HTTP, cabeceras ni clave del proveedor.
+        switch ($status) {
+            404 { $result.State='SinAntecedentes'; $result.Detail='El proveedor no encontro un informe para ese hash.'; $Context.Cache[$hash]=@{Result=$result; ExpiresUtc=(Get-Date).ToUniversalTime().AddMinutes(15)} }
+            401 { $result.State='CredencialesInvalidas'; $result.Detail='La API rechazo la autenticacion.'; $Context.Halted=$result.State }
+            403 { $result.State='SinPermiso'; $result.Detail='La cuenta no tiene permiso para esta consulta.'; $Context.Halted=$result.State }
+            429 { $result.State='LimiteAlcanzado'; $result.Detail='Cuota o limite del proveedor alcanzado; pausa local de 60 segundos.'; $Context.BlockedUntilUtc=(Get-Date).ToUniversalTime().AddSeconds(60) }
+            default {
+                $result.State=if ($exception.Message -eq 'InvalidResponse' -or $result.RetrievedAtUtc) {'RespuestaInvalida'} elseif ($status -ge 500) {'ErrorServicio'} else {'ErrorConexion'}
+                $result.Detail='No se obtuvo un informe valido. Se conserva la auditoria local; no se reintenta automaticamente.'
+            }
+        }
+        $result.Malicious=$null; $result.Suspicious=$null; $result.EnginesWithVerdict=$null; $result.LastAnalysisUtc=$null
+    } finally {
+        $headers.Clear(); $plain=$null
+        if ($pointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+    }
+    return $result
+}
+function Add-WAVirusTotalToProcesses {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$Nodes,[hashtable]$Context)
+    if ($null -eq $Context) { return }
+    foreach ($node in $Nodes.Values) {
+        $reputation=$null
+        try {
+            if (-not $node.ExecutablePath) { throw 'Sin ruta' }
+            # Verifica que MD5 actual coincida con el capturado antes de asociar reputacion.
+            $before=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm MD5 -ErrorAction Stop
+            $sha=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm SHA256 -ErrorAction Stop
+            $after=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm MD5 -ErrorAction Stop
+            if (-not $node.MD5 -or $before.Hash -ine $node.MD5 -or $after.Hash -ine $node.MD5) { throw 'Archivo diferente' }
+            $reputation=Get-WAVirusTotalReport -SHA256 $sha.Hash -Context $Context
+        } catch {
+            $reputation=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No se pudo asociar el SHA-256 al archivo observado; no se envio la consulta.'}
+        }
+        $node | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $reputation -Force
+    }
+}
 
 function Get-WAProcesses {
     [CmdletBinding()]
@@ -192,6 +307,15 @@ function Export-WACaptureTree {
         $signature = if ($Node.PSObject.Properties['SignatureStatus'] -and $Node.SignatureStatus) { Safe-Label $Node.SignatureStatus } else { 'NoDisponible' }
         $signer = if ($Node.PSObject.Properties['Signer'] -and $Node.Signer) { Safe-Label $Node.Signer } else { 'NoDisponible' }
         $lines.Add(('{0}+-- {1} PID {2} | MD5: {3} | Signature: {4} | Firmante: {5} | creado {6}' -f $Indent,(Safe-Label $Node.Name),$Node.ProcessId,$md5,$signature,$signer,$Node.CreationDate))
+        if ($Node.PSObject.Properties['VirusTotal']) {
+            $vt=$Node.VirusTotal
+            $suffix=' | VT: ' + (Safe-Label $vt.State)
+            if ($vt.State -eq 'Encontrado') {
+                $suffix += ' | maliciosos: {0} | sospechosos: {1} | evaluados: {2} | analisis UTC: {3}' -f $vt.Malicious,$vt.Suspicious,$vt.EnginesWithVerdict,$vt.LastAnalysisUtc
+            }
+            $lines[$lines.Count-1] += $suffix
+            if ($vt.PSObject.Properties['ReportUrl']) { $lines.Add($Indent + '    VT informe: ' + (Safe-Label $vt.ReportUrl)) }
+        }
         foreach ($field in @('MD5Error','SignatureError')) {
             if ($Node.PSObject.Properties[$field] -and $Node.$field) { $lines.Add(('{0}    {1}: {2}' -f $Indent,$field,(Safe-Label $Node.$field))) }
         }
@@ -334,6 +458,7 @@ function Start-WAEventCapture {
         [Parameter(Mandatory)][datetime]$EndTime,
         [Parameter(Mandatory)][string]$Directory,
         [ValidateRange(1,300)][int]$PollSeconds = 5,
+        [hashtable]$VirusTotalContext,
         [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational')
     )
     if (($TargetPid -eq 0 -and -not $ProcessName) -or ($TargetPid -gt 0 -and $ProcessName)) { throw 'Indica un solo selector: PID o nombre.' }
@@ -351,7 +476,7 @@ function Start-WAEventCapture {
     $seen = New-Object 'System.Collections.Generic.HashSet[string]'
     $statuses = New-Object 'System.Collections.Generic.List[object]'
     $metadata = [pscustomobject]@{
-        Tool='WinAudit'; Mode='EventCapture'; Host=$env:COMPUTERNAME
+        Tool='WinAudit'; Mode='EventCapture'; Host=$env:COMPUTERNAME; VirusTotalEnabled=($null -ne $VirusTotalContext)
         TimeZone=[TimeZoneInfo]::Local.Id; RequestedStart=$StartTime.ToString('o'); RequestedEnd=$EndTime.ToString('o')
         TargetPid=$TargetPid; ProcessName=$ProcessName; State='Esperando'; MatchedCount=0
         StartedAt=(Get-Date).ToString('o'); UpdatedAt=$null; LastQueryEnd=$null; FinishedAt=$null
@@ -408,6 +533,10 @@ function Start-WAEventCapture {
         $metadata.Sources = @($statuses.ToArray())
                 $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
         $metadata.State = if ($metadata.SourceIssues.Count -gt 0 -or $metadata.ProcessIssues.Count -gt 0) { 'FinalizadaConLimitaciones' } else { 'Finalizada' }
+        if ($null -ne $VirusTotalContext) {
+            Write-Host 'Captura local terminada. Consultando reputacion opcional por hashes unicos; puede demorar por limites de la API.'
+            Add-WAVirusTotalToProcesses -Nodes $processNodes -Context $VirusTotalContext
+        }
     } finally {
         if ($metadata.State -in @('Esperando','Capturando')) { $metadata.State = 'Interrumpida' }
         $metadata.ObservedProcessCount = $processNodes.Count
@@ -480,6 +609,15 @@ function Save-Report($Data, [string]$Name) {
 }
 function Invoke-LocalProcesses([string]$Name) {
     $items = @(Get-WAProcesses -Name $Name)
+    if ($script:vtAutomatic -and $script:vtContext) {
+        foreach ($item in $items) {
+            if ($item.ExecutablePath) {
+                $fileEvidence=[pscustomobject]@{Path=$item.ExecutablePath}
+                Add-OptionalReputation -Evidence $fileEvidence
+                $item | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $fileEvidence.VirusTotal -Force
+            }
+        }
+    }
     Show-Result ($items | Select-Object -First 40 Name,ProcessId,ParentProcessId,CreationDate,ExecutablePath)
     Write-Host ("Procesos: {0}. Se muestran hasta 40." -f $items.Count)
     return $items
@@ -487,7 +625,7 @@ function Invoke-LocalProcesses([string]$Name) {
 function Invoke-EventInvestigation {
     param([int]$TargetPid = 0,[string]$Name,[datetime]$From,[datetime]$Until,[switch]$Capture)
     if ($Capture) {
-        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds)
+        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds -VirusTotalContext $(if ($script:vtAutomatic) {$script:vtContext} else {$null}))
         return
     }
     if ($Until -gt (Get-Date)) { throw 'Para un fin futuro usa -Monitor o la opcion 7 del menu.' }
@@ -495,7 +633,7 @@ function Invoke-EventInvestigation {
     Show-Result $processes
     $evidence = @($processes | ForEach-Object {
         if ($_.ExecutablePath) {
-            try { Get-WAFileEvidence -Path $_.ExecutablePath -HashAlgorithm $HashAlgorithm } catch { Write-Warning $_.Exception.Message }
+            try { $fileEvidence=Get-WAFileEvidence -Path $_.ExecutablePath -HashAlgorithm $HashAlgorithm; Add-OptionalReputation -Evidence $fileEvidence; $fileEvidence } catch { Write-Warning $_.Exception.Message }
         }
     })
     $status = New-Object 'System.Collections.Generic.List[object]'
@@ -542,9 +680,62 @@ function Invoke-FileEvidenceMenu {
     $option = Read-Host 'Hash: [1] SHA-256 [2] MD5 [3] Ambos'
     $algorithm = switch ($option) { '1' {'SHA256'} '2' {'MD5'} '3' {'Both'} default {throw 'Opcion invalida.'} }
     $evidence = Get-WAFileEvidence -Path $path -HashAlgorithm $algorithm
+    Add-OptionalReputation -Evidence $evidence
     $evidence | Format-List | Out-Host
     Save-Report $evidence 'file-evidence'
 }
+function Add-OptionalReputation {
+    param([Parameter(Mandatory)]$Evidence)
+    if (-not $script:vtAutomatic -or $null -eq $script:vtContext) { return }
+    try {
+        $sha=(Get-FileHash -LiteralPath $Evidence.Path -Algorithm SHA256 -ErrorAction Stop).Hash
+        $report=Get-WAVirusTotalReport -SHA256 $sha -Context $script:vtContext
+    } catch { $report=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No se pudo leer el hash; no se envio la consulta.'} }
+    $Evidence | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $report -Force
+}
+function Invoke-VirusTotalMenu {
+    while ($true) {
+        Write-Host 'VirusTotal opcional: envia solo SHA-256 y clave al proveedor; no archivos, rutas ni logs.'
+        Write-Host 'Usa una cuenta/licencia habilitada para tu uso. Restricciones: https://docs.virustotal.com/reference/public-vs-premium-api'
+        Write-Host ('Configurado: {0} | Enriquecer auditorias al finalizar: {1}' -f ($null -ne $script:vtContext),$script:vtAutomatic)
+        Write-Host '[1] Cargar clave para esta sesion (o VIRUSTOTAL_API_KEY)'
+        Write-Host '[2] Consultar manualmente un hash SHA-256'
+        Write-Host '[3] Activar/desactivar enriquecimiento de auditorias'
+        Write-Host '[4] Desactivar y olvidar clave de esta sesion'
+        Write-Host '[0] Volver'
+        switch (Read-Host 'Opcion avanzada') {
+            '1' {
+                $key=if ($env:VIRUSTOTAL_API_KEY) {ConvertTo-SecureString $env:VIRUSTOTAL_API_KEY -AsPlainText -Force} else {Read-Host 'API key (oculta; solo memoria de esta sesion)' -AsSecureString}
+                $script:vtContext=New-WAVirusTotalContext -ApiKey $key
+                Write-Host 'Clave cargada. El enriquecimiento sigue desactivado hasta elegir opcion 3.'
+                $script:vtAutomatic=$false
+            }
+            '2' {
+                if ($null -eq $script:vtContext) {Write-Host 'Primero carga tu clave con opcion 1.'; continue}
+                $hash=Read-Host 'SHA-256 a enviar a VirusTotal'
+                $report=Get-WAVirusTotalReport -SHA256 $hash -Context $script:vtContext
+                $report | Format-List | Out-Host
+                Save-Report $report 'virustotal-reputation'
+            }
+            '3' {
+                if ($null -eq $script:vtContext) {Write-Host 'Primero carga tu clave con opcion 1.'; continue}
+                $script:vtAutomatic=-not $script:vtAutomatic
+            }
+            '4' { $script:vtAutomatic=$false; $script:vtContext=$null; Write-Host 'Integracion desactivada. La variable de entorno, si existe, no se modifica.' }
+            '0' { return }
+            default { Write-Host 'Opcion invalida.' }
+        }
+    }
+}
+$script:vtContext=$null
+$script:vtAutomatic=$false
+if ($VirusTotal) {
+    if ($env:VIRUSTOTAL_API_KEY) {
+        $script:vtContext=New-WAVirusTotalContext -ApiKey (ConvertTo-SecureString $env:VIRUSTOTAL_API_KEY -AsPlainText -Force)
+        $script:vtAutomatic=$true
+    } else { Write-Warning 'VirusTotal desactivado: no se configuro VIRUSTOTAL_API_KEY. La auditoria local continua.' }
+}
+if ($VirusTotal -and ($FullScan -or $ComputerName)) { throw '-VirusTotal solo admite busqueda, investigacion, archivo o captura local en esta version.' }
 $hasWindow = $PSBoundParameters.ContainsKey('StartTime') -or $PSBoundParameters.ContainsKey('EndTime')
 $from = if ($null -eq $StartTime) { if ($Monitor) {Get-Date} else {(Get-Date).AddHours(-24)} } else { ConvertTo-WADateTime $StartTime }
 $until = if ($null -eq $EndTime) { Get-Date } else { ConvertTo-WADateTime $EndTime }
@@ -552,6 +743,7 @@ if ($until -le $from) { throw 'El fin debe ser posterior al inicio.' }
 if ($FilePath) {
     if ($FindProcess -or $PIDToAudit -gt 0 -or $Monitor -or $ComputerName -or $FullScan -or $hasWindow) { throw '-FilePath solo admite -HashAlgorithm y -ReportDirectory.' }
     $evidence = Get-WAFileEvidence -Path $FilePath -HashAlgorithm $HashAlgorithm
+    Add-OptionalReputation -Evidence $evidence
     $evidence | Format-List | Out-Host
     Save-Report $evidence 'file-evidence'
     return
@@ -585,6 +777,7 @@ while ($true) {
     Write-Host '  [6] Buscar proceso activo por nombre (example.exe)'
     Write-Host '  [7] Capturar eventos hasta un horario futuro'
     Write-Host '  [8] Verificar archivo: firma, SHA-256, MD5 o ambos'
+    Write-Host '  [9] Avanzado: VirusTotal opcional (API key propia)'
     Write-Host '  [0] Salir'
     $choice = Read-Host 'Selecciona una opcion'
     try {
@@ -597,6 +790,7 @@ while ($true) {
             '6' { $name = Read-ExecutableName; Save-Report ([pscustomobject]@{Query=$name; CurrentProcesses=@(Invoke-LocalProcesses -Name $name)}) 'process-search' }
             '7' { Invoke-InteractiveEvents -Capture }
             '8' { Invoke-FileEvidenceMenu }
+            '9' { Invoke-VirusTotalMenu }
             '0' { return }
             default { Write-Host 'Opcion invalida.' -ForegroundColor Yellow }
         }

@@ -126,3 +126,36 @@ No requiere compilacion ni dependencias externas:
 ```
 
 El generador concatena los modulos y la interfaz sin sustituciones de expresiones regulares que puedan alterar cadenas PowerShell. Las pruebas usan eventos sinteticos y no sustituyen una validacion funcional contra los logs, permisos, WinRM y AD de un entorno Windows autorizado.
+
+## VirusTotal opcional — menu avanzado 9
+
+WinAudit sigue funcionando sin cuenta, clave ni acceso a VirusTotal. Esta integracion no decide si un proceso es seguro o malicioso; agrega evidencia de reputacion del ultimo analisis conocido.
+
+1. Entra en la opcion **9 — Avanzado: VirusTotal opcional**.
+2. Usa **1 — Cargar clave**. Si ya configuraste `VIRUSTOTAL_API_KEY`, se toma de esa variable; si no, se solicita mediante entrada oculta. Se mantiene solo en esta sesion y no se escribe en informes ni en Git.
+3. Usa **2** para consultar manualmente un SHA-256, o **3** para activar el enriquecimiento de auditorias locales posteriores. Cargar la clave no activa por si solo consultas automaticas.
+4. Usa **4** para desactivar y olvidar el contexto de esta sesion. La variable de entorno externa, si existe, no se modifica.
+
+La consulta transmite el SHA-256 y la clave a VirusTotal; no sube archivos, rutas, procesos completos ni logs. El proveedor tambien recibe informacion normal de la conexion. Usa una cuenta/licencia habilitada para tu caso: la API publica tiene restricciones de uso empresarial. Revisa [las condiciones oficiales](https://docs.virustotal.com/reference/public-vs-premium-api).
+
+### Uso por comando
+
+Solo cuando `VIRUSTOTAL_API_KEY` ya esta configurada de forma segura en tu entorno:
+
+```powershell
+.\WinAudit.ps1 -FilePath 'C:\Example\example.exe' -VirusTotal
+.\WinAudit.ps1 -FindProcess 'example.exe' -VirusTotal
+.\WinAudit.ps1 -FindProcess 'example.exe' -Monitor -End ((Get-Date).AddMinutes(10)) -VirusTotal
+```
+
+La variable de entorno por si sola no activa nada: hace falta `-VirusTotal`. Si falta la clave, se informa y la auditoria local continua sin consultas. El inventario remoto y `-FullScan` no admiten `-VirusTotal` en esta version.
+
+### Resultados, limites y privacidad
+
+Los informes JSON guardan el resultado bajo `VirusTotal`. En el arbol TXT y de pantalla, las instancias enriquecidas incluyen estado, cantidad de motores que reportaron malicioso/sospechoso, cantidad de motores con veredicto, fecha UTC del analisis y enlace al informe. El denominador excluye motores sin veredicto por fallos, timeout o tipos no compatibles; no significa que todas las detecciones sean correctas.
+
+Estados posibles incluyen `Encontrado`, `SinAntecedentes`, `SinAnalisisDisponible`, `LimiteAlcanzado`, `CredencialesInvalidas`, `SinPermiso`, `ErrorConexion`, `ErrorServicio` y `RespuestaInvalida`. Sin un SHA-256 capturado, la instancia se marca `EvidenciaNoDisponible`. No encontrar un informe o tener cero detecciones no equivale a seguro.
+
+La captura recopila primero la evidencia local. El enriquecimiento opcional ocurre al finalizar, con el SHA-256 preservado al observar la instancia. Puede demorar: se espacian solicitudes unicas al menos 16 segundos. Hay cache por hash durante la sesion y un tope local de 100 solicitudes por contexto. Un 429 pausa nuevas solicitudes 60 segundos, y un 401/403 requiere reconfigurar. No hay subidas ni reanalisis automaticos.
+
+Consulta el [modelo de seguridad](SECURITY.md) para conocer el almacenamiento de la clave, los datos enviados y las restricciones del proveedor. El workflow prueba la integracion con respuestas simuladas: no necesita claves reales ni realiza consultas a VirusTotal.

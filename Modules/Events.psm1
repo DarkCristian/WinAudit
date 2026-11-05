@@ -55,7 +55,7 @@ function Get-WAEvents {
                             elseif ($raw -match '^\d+$') { $parsed = [long]$raw }
                             if ($parsed -eq $TargetPid) { [void]$evidenceMatches.Add("EventData.$field") }
                         }
-                        if ($ProcessName -and $field -match '^(Image|NewProcessName|ProcessName|ApplicationName|SourceImage|TargetImage|ParentImage)$') {
+                        if ($ProcessName -and $field -match '^(Image|NewProcessName|ProcessName|ApplicationName|SourceImage|TargetImage|ParentImage|ParentProcessName)$') {
                             $leaf = ($raw.Trim('"') -split '[\\/]')[-1]
                             if ($leaf -ieq $ProcessName) { [void]$evidenceMatches.Add("EventData.$field (nombre)") }
                         }
@@ -105,6 +105,10 @@ function Start-WAEventCapture {
     $runId = 'capture-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8)
     $journal = Join-Path $Directory ($runId + '.jsonl')
     $manifest = Join-Path $Directory ($runId + '.json')
+    $treePath = Join-Path $Directory ($runId + '-tree.txt')
+    $processPath = Join-Path $Directory ($runId + '-processes.json')
+    $processNodes = @{}
+    $links = New-Object 'System.Collections.Generic.List[object]'
     [IO.File]::WriteAllText($journal, '', (New-Object Text.UTF8Encoding($false)))
     $seen = New-Object 'System.Collections.Generic.HashSet[string]'
     $statuses = New-Object 'System.Collections.Generic.List[object]'
@@ -113,7 +117,7 @@ function Start-WAEventCapture {
         TimeZone=[TimeZoneInfo]::Local.Id; RequestedStart=$StartTime.ToString('o'); RequestedEnd=$EndTime.ToString('o')
         TargetPid=$TargetPid; ProcessName=$ProcessName; State='Esperando'; MatchedCount=0
         StartedAt=(Get-Date).ToString('o'); UpdatedAt=$null; LastQueryEnd=$null; FinishedAt=$null
-        EventFile=$journal; Sources=@(); SourceIssues=@(); Limitations='Depende de logs habilitados y retencion. PID reutilizable; nombre no identifica instancia. Eventos tardios pueden faltar.'
+        EventFile=$journal; TreeReportFile=$treePath; ProcessEvidenceFile=$processPath; ObservedProcessCount=0; ProcessIssues=@(); Sources=@(); SourceIssues=@(); Limitations='Depende de logs habilitados y retencion. PID reutilizable; nombre no identifica instancia. Eventos tardios pueden faltar.'
     }
     $cursor = $StartTime
     try {
@@ -122,6 +126,10 @@ function Start-WAEventCapture {
         while ((Get-Date) -lt $StartTime) { Start-Sleep -Seconds 1 }
         $metadata.State = 'Capturando'
         while ($true) {
+            try { Update-WAObservedProcesses -Nodes $processNodes -TargetPid $TargetPid -ProcessName $ProcessName }
+            catch { $metadata.ProcessIssues = @(@($metadata.ProcessIssues) + @($_.Exception.Message) | Select-Object -Unique) }
+            $metadata.ObservedProcessCount = $processNodes.Count
+            ConvertTo-Json -InputObject @($processNodes.Values) -Depth 8 | Set-Content -LiteralPath $processPath -Encoding UTF8
             $now = Get-Date
             $upper = if ($now -lt $EndTime) { $now } else { $EndTime }
             $lower = $cursor.AddSeconds(-2)
@@ -134,6 +142,7 @@ function Start-WAEventCapture {
                     if ($seen.Add($key)) {
                         $_ | ConvertTo-Json -Depth 8 -Compress | Add-Content -LiteralPath $journal -Encoding UTF8
                         $metadata.MatchedCount++
+                        try { ConvertTo-WAProcessLink -Event $_ | ForEach-Object {$links.Add($_)} } catch { Write-Warning 'No se pudo interpretar un vinculo del evento.' }
                     }
                 }
                 $cursor = $upper
@@ -155,17 +164,21 @@ function Start-WAEventCapture {
             if ($seen.Add($key)) {
                 $_ | ConvertTo-Json -Depth 8 -Compress | Add-Content -LiteralPath $journal -Encoding UTF8
                 $metadata.MatchedCount++
+                try { ConvertTo-WAProcessLink -Event $_ | ForEach-Object {$links.Add($_)} } catch { Write-Warning 'No se pudo interpretar un vinculo del evento.' }
             }
         }
         $metadata.Sources = @($statuses.ToArray())
                 $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
-        $metadata.State = if ($metadata.SourceIssues.Count -gt 0) { 'FinalizadaConLimitaciones' } else { 'Finalizada' }
+        $metadata.State = if ($metadata.SourceIssues.Count -gt 0 -or $metadata.ProcessIssues.Count -gt 0) { 'FinalizadaConLimitaciones' } else { 'Finalizada' }
     } finally {
         if ($metadata.State -in @('Esperando','Capturando')) { $metadata.State = 'Interrumpida' }
+        $metadata.ObservedProcessCount = $processNodes.Count
+        ConvertTo-Json -InputObject @($processNodes.Values) -Depth 8 | Set-Content -LiteralPath $processPath -Encoding UTF8
+        [void](Export-WACaptureTree -Nodes $processNodes -Metadata $metadata -Path $treePath -Links $links.ToArray())
         $metadata.FinishedAt = (Get-Date).ToString('o')
         $metadata.UpdatedAt = $metadata.FinishedAt
         $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
-        Write-Host "Estado: $($metadata.State). Eventos: $journal. Resumen: $manifest"
+        Write-Host "Estado: $($metadata.State). Eventos: $journal. Resumen: $manifest. Arbol: $treePath"
     }
     return $metadata
 }

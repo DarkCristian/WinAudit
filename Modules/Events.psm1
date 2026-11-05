@@ -1,62 +1,172 @@
 Set-StrictMode -Version Latest
+
+function ConvertTo-WADateTime {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Value)
+    if ($Value -is [datetime]) { return $Value }
+    $parsed = [datetime]::MinValue
+    $formats = [string[]]@('dd-MM-yyyy HH:mm:ss','yyyy-MM-dd HH:mm:ss','dd-MM-yyyy HH:mm','yyyy-MM-dd HH:mm')
+    if (-not [datetime]::TryParseExact([string]$Value, $formats, [cultureinfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+        throw 'Fecha invalida. Usa dd-MM-yyyy HH:mm:ss o yyyy-MM-dd HH:mm:ss (hora local del equipo).'
+    }
+    return $parsed
+}
+
 function Get-WAEvents {
     <#
     .SYNOPSIS
-      Correlates available event records with a PID and time window.
+      Consulta eventos disponibles por PID o nombre exacto de ejecutable.
     .NOTES
-      Event System/Execution ProcessID is the event emitter, not necessarily the subject.
-      This function labels the matching field; PID reuse can cause false correlations.
+      Se etiqueta el campo coincidente: emisor, sujeto o proceso relacionado.
+      Un PID puede reutilizarse; un nombre no identifica una instancia unica.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateRange(1,2147483647)][int]$TargetPid,
-        [datetime]$StartTime=(Get-Date).AddHours(-24),
-        [datetime]$EndTime=(Get-Date),
-        [string[]]$Logs=@('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational')
+        [ValidateRange(0,2147483647)][int]$TargetPid = 0,
+        [string]$ProcessName,
+        [datetime]$StartTime = (Get-Date).AddHours(-24),
+        [datetime]$EndTime = (Get-Date),
+        [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational'),
+        [System.Collections.Generic.List[object]]$QueryStatus
     )
-    if ($EndTime -lt $StartTime) { throw 'Invalid time window.' }
+    if ($TargetPid -eq 0 -and [string]::IsNullOrWhiteSpace($ProcessName)) { throw 'Indica un PID o nombre de ejecutable.' }
+    if ($TargetPid -gt 0 -and $ProcessName) { throw 'Usa un solo selector: PID o nombre.' }
+    if ($EndTime -le $StartTime) { throw 'El fin debe ser posterior al inicio.' }
     foreach ($log in $Logs) {
+        $count = 0
+        $state = 'Consultado'
+        $detail = $null
         try {
-            $filter = @{LogName=$log; StartTime=$StartTime; EndTime=$EndTime}
-            $events = Get-WinEvent -FilterHashtable $filter -ErrorAction Stop
-        } catch {
-            Write-Verbose ("Unavailable or empty log {0}: {1}" -f $log,$_.Exception.Message)
-            continue
-        }
-        foreach ($evt in $events) {
-            $matches = New-Object System.Collections.Generic.List[string]
-            try {
-                [xml]$xml = $evt.ToXml()
-                $emitter = $xml.Event.System.Execution.ProcessID
-                if ($null -ne $emitter -and [string]$emitter -eq [string]$TargetPid) {
-                    [void]$matches.Add('System.Execution.ProcessID (emitter)')
-                }
-                foreach ($node in @($xml.Event.EventData.Data)) {
-                    if ($null -eq $node) { continue }
-                    $field = [string]$node.Name
-                    if ($field -notmatch '^(ProcessId|NewProcessId|ParentProcessId|CreatorProcessId|ClientProcessId|SourceProcessId|TargetProcessId)$') { continue }
-                    $raw = [string]$node.'#text'
-                    $parsed = 0L
-                    if ($raw -match '^0x[0-9a-fA-F]+$') {
-                        $parsed = [Convert]::ToInt64($raw.Substring(2),16)
-                    } elseif ($raw -match '^\d+$') {
-                        $parsed = [long]$raw
+            $events = @(Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=$StartTime; EndTime=$EndTime} -ErrorAction Stop)
+            foreach ($evt in $events) {
+                try {
+                    [xml]$xml = $evt.ToXml()
+                    $evidenceMatches = New-Object System.Collections.Generic.List[string]
+                    $execution = $xml.SelectSingleNode('/Event/System/Execution')
+                    if ($TargetPid -gt 0 -and $null -ne $execution -and $execution.GetAttribute('ProcessID') -eq [string]$TargetPid) {
+                        [void]$evidenceMatches.Add('System.Execution.ProcessID (emisor)')
                     }
-                    if ($parsed -eq $TargetPid) { [void]$matches.Add("EventData.$field") }
-                }
-            } catch { Write-Verbose ("Could not parse event {0}: {1}" -f $evt.RecordId,$_.Exception.Message) }
-            if ($matches.Count -gt 0) {
-                [pscustomobject]@{
-                    TimeCreated=$evt.TimeCreated
-                    LogName=$evt.LogName
-                    Id=$evt.Id
-                    RecordId=$evt.RecordId
-                    MatchedField=($matches -join ', ')
-                    Summary=if ($evt.Message) { ($evt.Message -replace '\s+',' ').Substring(0,[Math]::Min(160,($evt.Message -replace '\s+',' ').Length)) } else { '' }
-                    Message=$evt.Message
+                    foreach ($node in $xml.SelectNodes('/Event/EventData/Data')) {
+                        $field = $node.GetAttribute('Name')
+                        $raw = $node.InnerText
+                        if ($TargetPid -gt 0 -and $field -match '^(ProcessId|NewProcessId|ParentProcessId|CreatorProcessId|ClientProcessId|SourceProcessId|TargetProcessId)$') {
+                            $parsed = -1L
+                            if ($raw -match '^0x[0-9a-fA-F]+$') { $parsed = [Convert]::ToInt64($raw.Substring(2),16) }
+                            elseif ($raw -match '^\d+$') { $parsed = [long]$raw }
+                            if ($parsed -eq $TargetPid) { [void]$evidenceMatches.Add("EventData.$field") }
+                        }
+                        if ($ProcessName -and $field -match '^(Image|NewProcessName|ProcessName|ApplicationName|SourceImage|TargetImage|ParentImage)$') {
+                            $leaf = ($raw.Trim('"') -split '[\\/]')[-1]
+                            if ($leaf -ieq $ProcessName) { [void]$evidenceMatches.Add("EventData.$field (nombre)") }
+                        }
+                    }
+                    if ($evidenceMatches.Count -gt 0) {
+                        $count++
+                        $message = [string]$evt.Message
+                        $summary = $message -replace '\s+',' '
+                        [pscustomobject]@{
+                            TimeCreated=$evt.TimeCreated; LogName=$evt.LogName; Id=$evt.Id; RecordId=$evt.RecordId
+                            MatchedField=($evidenceMatches -join ', ')
+                            Summary=$summary.Substring(0,[Math]::Min(160,$summary.Length))
+                            Message=$message; EventXml=$evt.ToXml()
+                        }
+                    }
+                } catch {
+                    $state = 'Parcial'
+                    $detail = 'No se pudo interpretar uno o mas eventos: ' + $_.Exception.Message
                 }
             }
+        } catch {
+            if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $state = 'SinEventosEnIntervalo' }
+            else { $state = 'NoDisponible'; $detail = $_.Exception.Message }
         }
+        if ($null -ne $QueryStatus) {
+            $QueryStatus.Add([pscustomobject]@{LogName=$log; State=$state; MatchedCount=$count; Detail=$detail; CheckedAt=(Get-Date).ToString('o')})
+        }
+        if ($state -eq 'NoDisponible' -or $state -eq 'Parcial') { Write-Warning ("{0}: {1}. {2}" -f $log,$state,$detail) }
     }
 }
-Export-ModuleMember -Function Get-WAEvents
+
+function Start-WAEventCapture {
+    <# Mantener esta sesion abierta. No crea tareas programadas ni cambia auditorias. #>
+    [CmdletBinding()]
+    param(
+        [ValidateRange(0,2147483647)][int]$TargetPid = 0,
+        [string]$ProcessName,
+        [Parameter(Mandatory)][datetime]$StartTime,
+        [Parameter(Mandatory)][datetime]$EndTime,
+        [Parameter(Mandatory)][string]$Directory,
+        [ValidateRange(1,300)][int]$PollSeconds = 5,
+        [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational')
+    )
+    if (($TargetPid -eq 0 -and -not $ProcessName) -or ($TargetPid -gt 0 -and $ProcessName)) { throw 'Indica un solo selector: PID o nombre.' }
+    if ($EndTime -le $StartTime -or $EndTime -le (Get-Date)) { throw 'La captura necesita un fin futuro posterior al inicio.' }
+    [void](New-Item -ItemType Directory -Path $Directory -Force)
+    $runId = 'capture-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8)
+    $journal = Join-Path $Directory ($runId + '.jsonl')
+    $manifest = Join-Path $Directory ($runId + '.json')
+    [IO.File]::WriteAllText($journal, '', (New-Object Text.UTF8Encoding($false)))
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $statuses = New-Object 'System.Collections.Generic.List[object]'
+    $metadata = [pscustomobject]@{
+        Tool='WinAudit'; Mode='EventCapture'; Host=$env:COMPUTERNAME
+        TimeZone=[TimeZoneInfo]::Local.Id; RequestedStart=$StartTime.ToString('o'); RequestedEnd=$EndTime.ToString('o')
+        TargetPid=$TargetPid; ProcessName=$ProcessName; State='Esperando'; MatchedCount=0
+        StartedAt=(Get-Date).ToString('o'); UpdatedAt=$null; LastQueryEnd=$null; FinishedAt=$null
+        EventFile=$journal; Sources=@(); SourceIssues=@(); Limitations='Depende de logs habilitados y retencion. PID reutilizable; nombre no identifica instancia. Eventos tardios pueden faltar.'
+    }
+    $cursor = $StartTime
+    try {
+        $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
+        Write-Host ("Captura local de {0} a {1}. Zona: {2}. Mantene esta terminal abierta; Ctrl+C cancela." -f $StartTime,$EndTime,$metadata.TimeZone)
+        while ((Get-Date) -lt $StartTime) { Start-Sleep -Seconds 1 }
+        $metadata.State = 'Capturando'
+        while ($true) {
+            $now = Get-Date
+            $upper = if ($now -lt $EndTime) { $now } else { $EndTime }
+            $lower = $cursor.AddSeconds(-2)
+            if ($lower -lt $StartTime) { $lower = $StartTime }
+            if ($upper -gt $lower) {
+                $statuses.Clear()
+                $query = @{TargetPid=$TargetPid; ProcessName=$ProcessName; StartTime=$lower; EndTime=$upper; Logs=$Logs; QueryStatus=$statuses}
+                Get-WAEvents @query | ForEach-Object {
+                    $key = '{0}|{1}|{2}' -f $_.LogName,$_.RecordId,$_.TimeCreated.ToString('o')
+                    if ($seen.Add($key)) {
+                        $_ | ConvertTo-Json -Depth 8 -Compress | Add-Content -LiteralPath $journal -Encoding UTF8
+                        $metadata.MatchedCount++
+                    }
+                }
+                $cursor = $upper
+                $metadata.LastQueryEnd = $upper.ToString('o')
+                $metadata.Sources = @($statuses.ToArray())
+                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
+                $metadata.UpdatedAt = (Get-Date).ToString('o')
+                $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
+            }
+            if ($now -ge $EndTime) { break }
+            $remaining = ($EndTime - (Get-Date)).TotalSeconds
+            if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Max(1,[Math]::Min($PollSeconds * 1000,$remaining * 1000))) }
+        }
+        # Ultima lectura con margen para escrituras de eventos ligeramente demoradas.
+        Start-Sleep -Seconds 2
+        $statuses.Clear()
+        Get-WAEvents -TargetPid $TargetPid -ProcessName $ProcessName -StartTime $StartTime -EndTime $EndTime -Logs $Logs -QueryStatus $statuses | ForEach-Object {
+            $key = '{0}|{1}|{2}' -f $_.LogName,$_.RecordId,$_.TimeCreated.ToString('o')
+            if ($seen.Add($key)) {
+                $_ | ConvertTo-Json -Depth 8 -Compress | Add-Content -LiteralPath $journal -Encoding UTF8
+                $metadata.MatchedCount++
+            }
+        }
+        $metadata.Sources = @($statuses.ToArray())
+                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
+        $metadata.State = if ($metadata.SourceIssues.Count -gt 0) { 'FinalizadaConLimitaciones' } else { 'Finalizada' }
+    } finally {
+        if ($metadata.State -in @('Esperando','Capturando')) { $metadata.State = 'Interrumpida' }
+        $metadata.FinishedAt = (Get-Date).ToString('o')
+        $metadata.UpdatedAt = $metadata.FinishedAt
+        $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
+        Write-Host "Estado: $($metadata.State). Eventos: $journal. Resumen: $manifest"
+    }
+    return $metadata
+}
+Export-ModuleMember -Function ConvertTo-WADateTime,Get-WAEvents,Start-WAEventCapture

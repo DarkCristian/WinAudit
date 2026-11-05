@@ -125,11 +125,11 @@ function ConvertTo-WAProcessLink {
     $data = @{}
     foreach ($node in $xml.SelectNodes('/*[local-name()="Event"]/*[local-name()="EventData"]/*[local-name()="Data"]')) { $data[$node.GetAttribute('Name')]=$node.InnerText }
     if ($Event.LogName -eq 'Microsoft-Windows-Sysmon/Operational' -and $Event.Id -eq 1) {
-        [pscustomobject]@{Kind='Creacion (Sysmon 1)'; FromPid=$data.ParentProcessId; ToPid=$data.ProcessId; FromName=$data.ParentImage; ToName=$data.Image; FromGuid=$data.ParentProcessGuid; ToGuid=$data.ProcessGuid; Time=$Event.TimeCreated; RecordId=$Event.RecordId}
+        [pscustomobject]@{Kind='Creacion (Sysmon 1)'; FromPid=$data['ParentProcessId']; ToPid=$data['ProcessId']; FromName=$data['ParentImage']; ToName=$data['Image']; FromGuid=$data['ParentProcessGuid']; ToGuid=$data['ProcessGuid']; Time=$Event.TimeCreated; RecordId=$Event.RecordId}
     } elseif ($Event.LogName -eq 'Security' -and $Event.Id -eq 4688) {
-        [pscustomobject]@{Kind='Creacion (Security 4688; PID puede ser hexadecimal)'; FromPid=$data.ProcessId; ToPid=$data.NewProcessId; FromName=$data.ParentProcessName; ToName=$data.NewProcessName; FromGuid=$null; ToGuid=$null; Time=$Event.TimeCreated; RecordId=$Event.RecordId}
+        [pscustomobject]@{Kind='Creacion (Security 4688; PID puede ser hexadecimal)'; FromPid=$data['ProcessId']; ToPid=$data['NewProcessId']; FromName=$data['ParentProcessName']; ToName=$data['NewProcessName']; FromGuid=$null; ToGuid=$null; Time=$Event.TimeCreated; RecordId=$Event.RecordId}
     } elseif ($Event.LogName -eq 'Microsoft-Windows-Sysmon/Operational' -and $Event.Id -in @(8,10)) {
-        [pscustomobject]@{Kind=('Vinculo (Sysmon {0}; no implica parentesco)' -f $Event.Id); FromPid=$data.SourceProcessId; ToPid=$data.TargetProcessId; FromName=$data.SourceImage; ToName=$data.TargetImage; FromGuid=$data.SourceProcessGUID; ToGuid=$data.TargetProcessGUID; Time=$Event.TimeCreated; RecordId=$Event.RecordId}
+        [pscustomobject]@{Kind=('Vinculo (Sysmon {0}; no implica parentesco)' -f $Event.Id); FromPid=$data['SourceProcessId']; ToPid=$data['TargetProcessId']; FromName=$data['SourceImage']; ToName=$data['TargetImage']; FromGuid=$data['SourceProcessGUID']; ToGuid=$data['TargetProcessGUID']; Time=$Event.TimeCreated; RecordId=$Event.RecordId}
     }
 }
 
@@ -150,7 +150,7 @@ function Export-WACaptureTree {
     $lines.Add('')
     $lines.Add('ARBOL OBSERVADO (instantaneas; identidad = PID + fecha de creacion)')
     foreach ($root in @($Nodes.Values | Where-Object {$_.IsRoot} | Sort-Object CreationDate,ProcessId)) {
-        $lines.Add(('Proceso seleccionado / {0}; padre observado: {1} PID {2}' -f (Safe-Label $root.Name),(Safe-Label $root.ParentName),$root.ParentProcessId))
+        $lines.Add(('Proceso seleccionado / {0}; padre observado: {1} PID {2}' -f (Safe-Label $root.Name),$(if ($root.ParentName) {Safe-Label $root.ParentName} else {'no observado'}),$root.ParentProcessId))
         Add-TreeNode $root '' 0
     }
     if ($Nodes.Count -eq 0) { $lines.Add('No se observaron procesos con el selector durante las instantaneas.') }

@@ -68,19 +68,13 @@ Get-Command Get-ADComputer
 
 Then start WinAudit and choose **[4] Active Directory computer inventory**. Example input: `dc01.ad.example.com`; optional search base: `OU=Workstations,DC=ad,DC=example,DC=com`. Credentials must be authorized for the directory.
 
-## One-command launch (no clone required)
+## Installation and execution
 
-From Windows PowerShell:
+WinAudit supports three launch methods.
 
-```powershell
-irm https://raw.githubusercontent.com/DarkCristian/WinAudit/main/install.ps1 | iex
-```
+### Option 1: Clone the repository (Git)
 
-The launcher downloads the main script and required modules from this repository into a temporary directory, runs the interactive menu, then removes those temporary files. It does not install RSAT or enable WinRM. JSON reports are written outside the temporary directory.
-
-**Security warning:** `irm | iex` executes downloaded code directly. Only use it if you trust the repository and its current `main` branch. For a reviewable and reproducible execution, download the files, inspect them, and use a specific commit rather than a mutable branch.
-
-## Run
+Recommended when you want to inspect the source code, keep the modules locally, and update the project later.
 
 ```powershell
 git clone https://github.com/DarkCristian/WinAudit.git
@@ -88,13 +82,39 @@ cd WinAudit
 .\WinAudit.ps1
 ```
 
-Other modes:
+Update the checkout with `git pull`.
+
+### Option 2: One-command bootstrapper (IRM)
+
+Run from Windows PowerShell without Git or a persistent installation:
+
+```powershell
+irm https://raw.githubusercontent.com/DarkCristian/WinAudit/main/install.ps1 | iex
+```
+
+The bootstrapper downloads WinAudit and its modules into a temporary directory, runs the console, then removes the downloaded program files. Reports are retained separately. It does not install RSAT or enable WinRM.
+
+**Security:** `irm | iex` executes code retrieved from the internet. Review the source and prefer a pinned version for managed environments.
+
+### Option 3: Standalone PowerShell script
+
+Download [WinAudit-Standalone.ps1](dist/WinAudit-Standalone.ps1) and run it directly:
+
+```powershell
+.\WinAudit-Standalone.ps1
+```
+
+This standalone build includes the application modules in one file and does not require Git. It is an initial development build and has not yet been functionally validated on Windows.
+
+### Non-interactive examples (Git checkout or standalone)
 
 ```powershell
 .\WinAudit.ps1 -FullScan
 .\WinAudit.ps1 -PIDToAudit 1234 -StartTime '2026-01-01 10:00' -EndTime '2026-01-01 11:00'
 .\WinAudit.ps1 -ComputerName pc001.ad.example.com
 ```
+
+Replace `WinAudit.ps1` with `WinAudit-Standalone.ps1` when using the standalone file.
 
 ## Menu
 

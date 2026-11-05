@@ -14,68 +14,40 @@
 
 > **Versión Alpha para pruebas.** El proyecto incluye [pruebas automatizadas](https://github.com/DarkCristian/WinAudit/actions/workflows/validate-standalone.yml) para Windows PowerShell 5.1 y PowerShell 7, con eventos sintéticos, validación de fechas y comprobación del archivo independiente. Las auditorías reales de procesos, registros, WinRM y AD todavía requieren validación en un entorno Windows autorizado. No debe considerarse una herramienta completa de adquisición forense.
 
-## Versión publicada y avance
+## Versión y avance — v0.3.0-alpha
 
-**[WinAudit v0.2.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.2.0-alpha) — pre-release publicada el 5 de noviembre de 2026.**
+**[WinAudit v0.3.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.3.0-alpha)** incorpora la integración opcional de reputación VirusTotal en el menú avanzado 9. Conserva consultas históricas, captura por horarios, árbol en TXT/pantalla con MD5 y firma, e inventarios local, remoto y de Active Directory.
 
-Esta versión incorpora búsqueda exacta por nombre con todos los PID activos, consultas históricas con inicio y fin, captura local con espera y guardado progresivo, informe TXT del árbol observado y verificación de archivos con SHA-256, MD5 o ambos. Los informes incluyen eventos JSONL, resumen JSON y evidencia de procesos JSON. Las opciones 6, 7 y 8 del menú reúnen las nuevas funciones.
-
-| Área | Avance verificable |
+| Área | Avance |
 | --- | --- |
-| Código y distribución | Publicados en `v0.2.0-alpha`; el asset permanece fijado al tag; `main` contiene además los avances indicados debajo |
-| Pruebas en Windows PowerShell 5.1 y PowerShell 7 | [Aprobadas con datos sintéticos](https://github.com/DarkCristian/WinAudit/actions/runs/42104230332): sintaxis, ensamblado, fechas, búsqueda, correlación, captura, árbol con PID reutilizado y hashes conocidos |
-| Validación operativa | Pendiente contra registros reales, permisos, WinRM y AD en un entorno Windows autorizado |
-| Próximas funciones | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos; todavía no implementados |
+| Auditoría local | Procesos, firmas, hashes SHA-256/MD5, intervalos y captura local implementados |
+| Árbol e informes | PID, MD5, Signature y firmante en TXT y pantalla; JSON/JSONL con evidencia |
+| VirusTotal | Consulta manual por SHA-256 y enriquecimiento local opcional; apagado por defecto |
+| Validación | [Workflow de Windows PowerShell 5.1 y PowerShell 7](https://github.com/DarkCristian/WinAudit/actions/runs/42111064134); API simulada, sin claves reales ni solicitudes externas |
+| Validación operativa | Pendiente contra registros reales, permisos, WinRM, AD y una cuenta autorizada de VirusTotal |
+| Próximas funciones | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos |
 
-La captura funciona en la sesión actual y requiere mantener la terminal abierta. El árbol refleja la evidencia observada y puede perder procesos breves entre lecturas. Esta publicación conserva el estado **Alpha**.
+La integración no convierte WinAudit en un antivirus: agrega estadísticas de un proveedor, su fecha de análisis y un enlace al informe. Una firma válida o cero detecciones no garantizan seguridad.
 
-### Identificadores de la versión
+### Archivo publicado y SHA-256
 
-| Identificador | SHA |
-| --- | --- |
-| Commit Git al que apunta `v0.2.0-alpha` (SHA-1) | [`01b0f6d242da8aa05d69ed80bba126b2de8b7e3c`](https://github.com/DarkCristian/WinAudit/commit/01b0f6d242da8aa05d69ed80bba126b2de8b7e3c) |
-| Blob Git de `dist/WinAudit-Standalone.ps1` en el tag (SHA-1) | `1401631dec9ea6d4eb901156d0a599568e880cc8` |
+Descargá [WinAudit-Standalone.ps1](https://github.com/DarkCristian/WinAudit/releases/download/v0.3.0-alpha/WinAudit-Standalone.ps1) y [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.3.0-alpha/SHA256SUMS.txt) desde los Assets de esta versión.
 
-Los SHA-1 anteriores identifican objetos Git. Para comprobar los archivos descargados, usá sus **SHA-256**:
+Snapshot de código y workflow: [`12d28f58a8c14bc9b724c546f8a38eec3ffb14a2`](https://github.com/DarkCristian/WinAudit/commit/12d28f58a8c14bc9b724c546f8a38eec3ffb14a2). Blob Git del standalone: `53721b6df6d99e28485280d08e351b5c397b1bb5`. Estos SHA-1 identifican objetos Git; el SHA-256 siguiente verifica los bytes del script.
 
-| Archivo publicado | SHA-256 |
-| --- | --- |
-| [WinAudit-Standalone.ps1](https://github.com/DarkCristian/WinAudit/releases/download/v0.2.0-alpha/WinAudit-Standalone.ps1) | `0042b73def90af8bf55c8255698da6b323246388b7bd15fff49e4e55a643ce30` |
-| [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.2.0-alpha/SHA256SUMS.txt) | `7952b9b3450f18fba3a2c106dea3e265d4cb4bb7e2e0e2783e6f4f510ae12c49` |
-
-El archivo `SHA256SUMS.txt` contiene el SHA-256 del script. El segundo hash de la tabla verifica el propio archivo de sumas.
-
-Después de descargar el script, podés verificarlo sin ejecutarlo:
-
-```powershell
-$esperado = '0042b73def90af8bf55c8255698da6b323246388b7bd15fff49e4e55a643ce30'
-$obtenido = (Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256).Hash
-if ($obtenido -ine $esperado) {
-    throw 'El SHA-256 no coincide con el archivo publicado.'
-}
-Write-Host 'SHA-256 verificado.'
-```
-
-Estos identificadores corresponden a `v0.2.0-alpha`; futuros cambios en `main` pueden tener otros hashes.
-
-## Avance posterior a v0.2.0-alpha en main
-
-El árbol del monitoreo ahora incluye **PID | MD5 | Signature | Firmante**, tanto en el informe TXT como en pantalla al finalizar. El JSON conserva el momento de lectura y los errores de evidencia por separado. Un archivo sin firma se muestra como `NotSigned`; si no se puede leer, se indica `NoDisponible`.
+SHA-256 del script:
 
 ```text
-+-- example.exe PID 1010 | MD5: <32 caracteres hexadecimales> | Signature: Valid | Firmante: CN=Example Publisher | creado <fecha>
+423f559e1440d7f4d118732745948caa375fc177c7a0580ae56a0144d2786589
 ```
 
-Ejemplo ilustrativo. El hash y la firma describen el archivo accesible al observar la instancia, no su contenido histórico ni la memoria del proceso. Las instancias del mismo archivo pueden reutilizar evidencia dentro de la captura si no cambian ruta, tamaño y fecha de modificación.
+```powershell
+$esperado = '423f559e1440d7f4d118732745948caa375fc177c7a0580ae56a0144d2786589'
+$obtenido = (Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256).Hash
+if ($obtenido -ine $esperado) { throw 'SHA-256 distinto del publicado.' }
+```
 
-Este cambio está en el [standalone actual de main](https://raw.githubusercontent.com/DarkCristian/WinAudit/main/dist/WinAudit-Standalone.ps1); **el asset de v0.2.0-alpha todavía conserva la versión anterior**.
-
-| Identificador del standalone con MD5 y firma en el árbol | Valor |
-| --- | --- |
-| Commit de implementación | [`981e85ec7c99fbd08122d32b4ad4ee9d55ab00fa`](https://github.com/DarkCristian/WinAudit/commit/981e85ec7c99fbd08122d32b4ad4ee9d55ab00fa) |
-| SHA-256 del archivo en ese commit | `658adf4c9883a21fab9e7f499c8b694f612f0ed5820551251c94977db99cd057` |
-
-La [validación automatizada](https://github.com/DarkCristian/WinAudit/actions/workflows/validate-standalone.yml) incluye hashes conocidos, firma válida simulada, ausencia de firma, errores independientes de hash/firma, caché y coincidencia del formato de pantalla y TXT.
+Los hashes corresponden al asset de `v0.3.0-alpha`; `main` puede cambiar posteriormente. El workflow genera además un artefacto con el standalone probado y su checksum.
 
 ## Funciones
 
@@ -91,6 +63,7 @@ La [validación automatizada](https://github.com/DarkCristian/WinAudit/actions/w
 | Inventario de procesos remotos mediante WinRM | Implementado |
 | Descubrimiento de equipos de AD mediante RSAT | Implementado |
 | Exportación local de informes JSON | Implementada |
+| Reputación VirusTotal por SHA-256 | Opcional, desactivada por defecto |
 | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos | Planificados |
 
 ## Requisitos
@@ -182,17 +155,17 @@ El bootstrapper descarga WinAudit y sus módulos en una carpeta temporal, ejecut
 
 ### Opción 3 — Descargar el archivo PowerShell independiente
 
-Para probar las nuevas funciones de búsqueda y captura, descargá **WinAudit-Standalone.ps1** desde los **Assets** de la [pre-release v0.2.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.2.0-alpha) y ejecutalo:
+Para probar las nuevas funciones de búsqueda y captura, descargá **WinAudit-Standalone.ps1** desde los **Assets** de la [pre-release v0.3.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.3.0-alpha) y ejecutalo:
 
 ```powershell
 .\WinAudit-Standalone.ps1
 ```
 
-Podés [revisar su código](dist/WinAudit-Standalone.ps1) antes de ejecutarlo. La versión `v0.2.0-alpha` incluye búsqueda por nombre, captura por horarios, informes de árbol y hashes SHA-256/MD5.
+Podés [revisar su código](dist/WinAudit-Standalone.ps1) antes de ejecutarlo. La versión `v0.3.0-alpha` incluye búsqueda por nombre, captura por horarios, árbol con MD5 y firma, y VirusTotal opcional.
 
 Incluye los módulos propios en un solo archivo y no requiere Git. RSAT sigue siendo opcional para descubrir equipos de Active Directory; WinRM sigue siendo necesario para el inventario remoto.
 
-**Versión publicada:** el asset `.ps1` y los archivos **Source code** de `v0.2.0-alpha` corresponden al mismo código del tag. Las notas incluyen el SHA-256 del archivo y las pruebas realizadas.
+**Versión publicada:** el asset `.ps1` y los archivos **Source code** de `v0.3.0-alpha` corresponden al mismo código del tag. Las notas incluyen el SHA-256 del archivo y las pruebas realizadas.
 
 ### Ejemplos sin menú interactivo
 
@@ -240,6 +213,18 @@ Consultá la [guía de uso](docs/USAGE.md) para conocer los campos, límites, ca
 
 Usá `MD5`, `SHA256` o `Both`; también están disponibles en la opción **8** del menú. El resultado incluye la firma digital y se guarda en JSON. Los hashes describen el archivo actual en disco. MD5 sirve para comparar identificadores; no demuestra integridad frente a manipulación intencional.
 
+## Integración avanzada opcional: VirusTotal
+
+**No necesitás configurar nada para usar WinAudit.** Al final del menú, la opción **9** permite que SysAdmin o SegInfo cargue su propia API key para la sesión, consulte un SHA-256 manualmente y, si quiere, active el enriquecimiento de auditorías locales. Cargar la clave no activa consultas automáticas.
+
+También se admite `VIRUSTOTAL_API_KEY` junto con `-VirusTotal` explícito. Tener la variable definida sin activar la opción no inicia consultas. La clave no se incluye en código, informes ni workflows.
+
+Solo se envían hashes SHA-256 para recuperar informes existentes. No se suben ejecutables ni logs ni se solicitan reanálisis. Se usan caché y límites locales, y se controlan errores de autenticación, cuota y conexión. Durante el monitoreo, las consultas se hacen al finalizar la captura local, usando el SHA-256 observado.
+
+**Uso empresarial:** el operador debe usar una cuenta/licencia compatible con los [términos del proveedor](https://docs.virustotal.com/reference/public-vs-premium-api). La API pública tiene restricciones comerciales y para flujos empresariales que no aportan archivos nuevos. La integración no supone que una clave gratuita sea apropiada para una organización.
+
+Ver [configuración y ejemplos](docs/USAGE.md#virustotal-opcional--menu-avanzado-9) y [modelo de seguridad](docs/SECURITY.md).
+
 ## Menú
 
 | Opción | Acción |
@@ -252,6 +237,7 @@ Usá `MD5`, `SHA256` o `Both`; también están disponibles en la opción **8** d
 | 6 | Buscar proceso activo por nombre exacto |
 | 7 | Esperar y capturar eventos hasta un horario futuro |
 | 8 | Verificar archivo: firma, SHA-256, MD5 o ambos |
+| 9 | Avanzado: configurar o consultar VirusTotal de forma opcional |
 | 0 | Salir |
 
 ## Alcance y límites de la evidencia

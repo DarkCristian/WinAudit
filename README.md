@@ -119,17 +119,17 @@ El bootstrapper descarga WinAudit y sus módulos en una carpeta temporal, ejecut
 
 ### Opción 3 — Descargar el archivo PowerShell independiente
 
-Para probar las nuevas funciones de búsqueda y captura, descargá el [archivo independiente actual en main](https://raw.githubusercontent.com/DarkCristian/WinAudit/main/dist/WinAudit-Standalone.ps1) y ejecutalo:
+Para probar las nuevas funciones de búsqueda y captura, descargá **WinAudit-Standalone.ps1** desde los **Assets** de la [pre-release v0.2.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.2.0-alpha) y ejecutalo:
 
 ```powershell
 .\WinAudit-Standalone.ps1
 ```
 
-Podés [revisar su código](dist/WinAudit-Standalone.ps1) antes de ejecutarlo. La [pre-release v0.1.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.1.0-alpha) conserva el asset anterior; no contiene estas nuevas funciones.
+Podés [revisar su código](dist/WinAudit-Standalone.ps1) antes de ejecutarlo. La versión `v0.2.0-alpha` incluye búsqueda por nombre, captura por horarios, informes de árbol y hashes SHA-256/MD5.
 
 Incluye los módulos propios en un solo archivo y no requiere Git. RSAT sigue siendo opcional para descubrir equipos de Active Directory; WinRM sigue siendo necesario para el inventario remoto.
 
-**Nota sobre esta pre-release:** el asset `.ps1` contiene la corrección del ensamblado publicada después del tag original. Los archivos automáticos **Source code** corresponden al tag anterior a esa corrección. Para probar el archivo independiente corregido, descargá el asset **WinAudit-Standalone.ps1**. El detalle y su SHA-256 están publicados en las notas de la pre-release.
+**Versión publicada:** el asset `.ps1` y los archivos **Source code** de `v0.2.0-alpha` corresponden al mismo código del tag. Las notas incluyen el SHA-256 del archivo y las pruebas realizadas.
 
 ### Ejemplos sin menú interactivo
 

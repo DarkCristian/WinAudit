@@ -69,6 +69,23 @@ Consulta cada cinco segundos por defecto (`-PollSeconds` acepta de 1 a 300), sol
 
 No habilita los logs de Security, PowerShell o Sysmon, no instala Sysmon y no modifica politicas. Informa fuentes inaccesibles o registros parcialmente interpretados. La captura puede finalizar con limitaciones aunque haya encontrado eventos en otras fuentes.
 
+
+### MD5 y firma en el arbol
+
+Al finalizar la captura, el arbol se guarda en el TXT y se muestra en pantalla con este formato ilustrativo:
+
+```text
++-- example.exe PID 1010 | MD5: <32 caracteres hexadecimales> | Signature: Valid | Firmante: CN=Example Publisher | creado <fecha>
+```
+
+Se leen el MD5 y la firma Authenticode del archivo accesible al observar por primera vez cada instancia del proceso. El JSON de procesos conserva `MD5`, `SignatureStatus`, `Signer`, `FileEvidenceAt`, `MD5Error` y `SignatureError`. El TXT incluye la fecha de lectura y los errores.
+
+`NotSigned` indica ausencia de firma; `NoDisponible` indica que falta la ruta o no pudo leerse la evidencia. Un error de firma no oculta un MD5 disponible, ni un error de hash oculta una firma disponible. Otros estados Authenticode, como `HashMismatch`, se conservan sin convertirlos en una conclusion de riesgo.
+
+Para reducir lecturas repetidas, las instancias que usan un mismo archivo pueden reutilizar evidencia obtenida durante esa captura si no cambiaron ruta, tamano y fecha de modificacion. Esta comprobacion no equivale a una garantia de inmutabilidad. Si el archivo cambia durante la lectura, la evidencia se marca no disponible. El hash y la firma describen el archivo leido en disco, no la memoria ni el ejecutable historico de un evento.
+
+Los vinculos historicos de la seccion de eventos no reciben un MD5 ni una firma inferidos a partir de su nombre.
+
 ## Firmas, SHA-256 y MD5
 
 Desde la opcion **8** del menu, ingresa la ruta del archivo y elegi SHA-256, MD5 o ambos. Por comando:

@@ -10,13 +10,24 @@ permissions:
 jobs:
   parse-and-smoke:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v4
-      - name: Parse and open menu
-        shell: ${{ matrix.shell }}
+      - name: Windows PowerShell syntax and menu
+        shell: powershell
+        run: |
+          $path = Join-Path $PWD 'dist/WinAudit-Standalone.ps1'
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors)
+          if ($parseErrors.Count -gt 0) {
+              $parseErrors | Format-List
+              throw 'Standalone syntax validation failed.'
+          }
+          function global:Read-Host { param($Prompt) '0' }
+          try { & $path } finally { Remove-Item Function:\Read-Host }
+          Write-Host 'Syntax and menu exit passed.'
+      - name: PowerShell 7 syntax and menu
+        shell: pwsh
         run: |
           $path = Join-Path $PWD 'dist/WinAudit-Standalone.ps1'
           $tokens = $null

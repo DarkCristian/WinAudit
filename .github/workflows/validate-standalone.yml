@@ -15,7 +15,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: Windows PowerShell 5.1
         shell: powershell
-        run: .\tests\Features.Tests.ps1
+        run: |
+          .\tests\Features.Tests.ps1
+          .\tests\Reputation.Tests.ps1
       - name: PowerShell 7
         shell: pwsh
-        run: .\tests\Features.Tests.ps1
+        run: |
+          .\tests\Features.Tests.ps1
+          .\tests\Reputation.Tests.ps1
+      - name: Package standalone and checksums
+        shell: pwsh
+        run: |
+          $file = 'dist/WinAudit-Standalone.ps1'
+          $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), "$hash  WinAudit-Standalone.ps1`n", (New-Object Text.UTF8Encoding($false)))
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WinAudit-standalone-tested
+          path: |
+            dist/WinAudit-Standalone.ps1
+            dist/SHA256SUMS.txt
+          if-no-files-found: error

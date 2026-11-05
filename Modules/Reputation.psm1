@@ -99,15 +99,11 @@ function Add-WAVirusTotalToProcesses {
     foreach ($node in $Nodes.Values) {
         $reputation=$null
         try {
-            if (-not $node.ExecutablePath) { throw 'Sin ruta' }
-            # Verifica que MD5 actual coincida con el capturado antes de asociar reputacion.
-            $before=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm MD5 -ErrorAction Stop
-            $sha=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm SHA256 -ErrorAction Stop
-            $after=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm MD5 -ErrorAction Stop
-            if (-not $node.MD5 -or $before.Hash -ine $node.MD5 -or $after.Hash -ine $node.MD5) { throw 'Archivo diferente' }
-            $reputation=Get-WAVirusTotalReport -SHA256 $sha.Hash -Context $Context
+            if (-not $node.PSObject.Properties['SHA256'] -or $node.SHA256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Sin SHA256 capturado' }
+            # Consulta el SHA256 preservado al observar la instancia, aunque el proceso haya terminado.
+            $reputation=Get-WAVirusTotalReport -SHA256 $node.SHA256 -Context $Context
         } catch {
-            $reputation=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No se pudo asociar el SHA-256 al archivo observado; no se envio la consulta.'}
+            $reputation=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No hay un SHA-256 capturado para esta instancia; no se envio la consulta.'}
         }
         $node | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $reputation -Force
     }

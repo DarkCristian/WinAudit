@@ -49,6 +49,28 @@ if ($obtenido -ine $esperado) { throw 'SHA-256 distinto del publicado.' }
 
 Los hashes corresponden al asset de `v0.3.0-alpha`; `main` puede cambiar posteriormente. El workflow genera además un artefacto con el standalone probado y su checksum.
 
+## Avance en main: LDAP/LDAPS y WinRM
+
+La opción **4** permite descubrir equipos de AD mediante **LDAPS** (predeterminado), **LDAP con firma y cifrado de sesión** o **RSAT**. Después del inventario podés seleccionar un equipo y consultar sus procesos mediante **WinRM**, con permisos independientes.
+
+LDAP/LDAPS no requiere RSAT. No se omiten certificados, no se siguen referrals y no se degrada automáticamente una conexión protegida. Los resultados se paginan y los límites alcanzados se indican explícitamente.
+
+```powershell
+.\WinAudit.ps1 -DirectoryServer dc01.ad.example.com -DirectoryProtocol LDAPS -DirectoryNameFilter 'PC-*'
+.\WinAudit.ps1 -ComputerName pc001.ad.example.com
+```
+
+Este avance está en el [standalone actual de main](https://raw.githubusercontent.com/DarkCristian/WinAudit/main/dist/WinAudit-Standalone.ps1). El asset de **v0.3.0-alpha** conserva la versión anterior; su SHA-256 publicado sigue identificando ese archivo.
+
+[Pruebas aprobadas en PowerShell 5.1 y 7](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065), con respuestas LDAP/LDAPS/RSAT/WinRM simuladas. Queda pendiente la validación contra un dominio autorizado.
+
+| Identificador de este avance | Valor |
+| --- | --- |
+| Commit del standalone | [`922574861111027da5e2d6d55cc4866979e93a4a`](https://github.com/DarkCristian/WinAudit/commit/922574861111027da5e2d6d55cc4866979e93a4a) |
+| SHA-256 del standalone en ese commit | `ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875` |
+
+Ver [uso y autenticación de LDAP/LDAPS y WinRM](docs/USAGE.md#descubrimiento-de-ad-por-ldapldaps-y-consulta-winrm).
+
 ## Funciones
 
 | Función | Estado |
@@ -61,7 +83,7 @@ Los hashes corresponden al asset de `v0.3.0-alpha`; `main` puede cambiar posteri
 | Captura local hasta un horario futuro, con espera y guardado progresivo | Implementada en la sesión actual |
 | Informe TXT y en pantalla de árbol observado, con MD5 y firma por proceso | Implementado; limitado a evidencia disponible |
 | Inventario de procesos remotos mediante WinRM | Implementado |
-| Descubrimiento de equipos de AD mediante RSAT | Implementado |
+| Descubrimiento de equipos mediante LDAP/LDAPS o RSAT y seleccion WinRM | Implementado en main; requiere validación operativa |
 | Exportación local de informes JSON | Implementada |
 | Reputación VirusTotal por SHA-256 | Opcional, desactivada por defecto |
 | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos | Planificados |
@@ -71,14 +93,14 @@ Los hashes corresponden al asset de `v0.3.0-alpha`; `main` puede cambiar posteri
 - Windows PowerShell 5.1 o PowerShell 7 en Windows, según las funciones disponibles.
 - Permisos elevados para acceder a determinados datos de procesos y registros protegidos.
 - WinRM configurado y acceso autorizado para el modo remoto.
-- Módulo PowerShell ActiveDirectory de RSAT para descubrir equipos en AD.
+- RSAT ActiveDirectory solo para el proveedor RSAT. LDAP/LDAPS permite descubrir equipos sin RSAT.
 - Registros de Windows habilitados y con retención suficiente para el período investigado.
 
 ## Dependencias de Active Directory — opcionales
 
 **WinAudit no requiere compilación:** se ejecuta directamente como scripts PowerShell.
 
-RSAT solo es necesario para descubrir objetos de equipo con `Get-ADComputer`. Las auditorías locales y las consultas remotas directas mediante WinRM no requieren RSAT.
+RSAT solo es necesario para el proveedor que consulta objetos con `Get-ADComputer`. El descubrimiento directo LDAP/LDAPS no requiere RSAT. Las auditorías locales y las consultas remotas directas mediante WinRM no requieren RSAT.
 
 Desde la carpeta del repositorio, comprobá si el módulo está disponible:
 
@@ -232,7 +254,7 @@ Ver [configuración y ejemplos](docs/USAGE.md#virustotal-opcional--menu-avanzado
 | 1 | Mostrar procesos locales |
 | 2 | Consultar eventos históricos por PID o nombre, con inicio y fin |
 | 3 | Inventario remoto de procesos mediante WinRM |
-| 4 | Inventario de equipos de Active Directory |
+| 4 | Descubrir equipos por LDAP/LDAPS o RSAT y seleccionar WinRM |
 | 5 | Inventario local completo e informe JSON |
 | 6 | Buscar proceso activo por nombre exacto |
 | 7 | Esperar y capturar eventos hasta un horario futuro |

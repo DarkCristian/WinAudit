@@ -61,9 +61,12 @@ function Invoke-WABootstrap {
     $expected='369a7d9518a240a4a81e76a2dd7acb05146be228eb4d8ad27c2c0e0100229f14'
     $root=Join-Path ([IO.Path]::GetTempPath()) ('WinAudit-'+[guid]::NewGuid().ToString('N'))
     $lock=$null
+    $created=$false
     try {
+        $root=Resolve-WALocalEvidencePath -Path $root -AllowMissing
         if ([IO.Directory]::Exists($root)) {throw 'Directorio temporal inesperado.'}
         $root=Initialize-WAReportDirectory $root
+        $created=$true
         $file=Join-Path $root 'WinAudit-Standalone.ps1'
         Invoke-WebRequest -Uri $source -OutFile $file -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 30 -ErrorAction Stop
         $file=Resolve-WALocalEvidencePath $file
@@ -75,7 +78,7 @@ function Invoke-WABootstrap {
         Invoke-WALaunchScript $file
     } finally {
         if ($null -ne $lock) {$lock.Dispose()}
-        if ([IO.Directory]::Exists($root)) {
+        if ($created -and [IO.Directory]::Exists($root)) {
             try {
                 [void](Resolve-WALocalEvidencePath $root)
                 $file=Join-Path $root 'WinAudit-Standalone.ps1'

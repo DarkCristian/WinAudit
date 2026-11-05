@@ -1,44 +1,21 @@
-name: Validate standalone
+name: Validate WinAudit
 on:
   push:
     paths:
-      - 'dist/WinAudit-Standalone.ps1'
+      - '**.ps1'
+      - '**.psm1'
       - '.github/workflows/validate-standalone.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
-  parse-and-smoke:
+  windows-tests:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Windows PowerShell syntax and menu
+      - name: Windows PowerShell 5.1
         shell: powershell
-        run: |
-          $path = Join-Path $PWD 'dist/WinAudit-Standalone.ps1'
-          $tokens = $null
-          $parseErrors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors)
-          if ($parseErrors.Count -gt 0) {
-              $parseErrors | Format-List
-              throw 'Standalone syntax validation failed.'
-          }
-          function global:Clear-Host { }
-          function global:Read-Host { param($Prompt) '0' }
-          try { & $path } finally { Remove-Item Function:\Read-Host; Remove-Item Function:\Clear-Host }
-          Write-Host 'Syntax and menu exit passed.'
-      - name: PowerShell 7 syntax and menu
+        run: .\tests\Features.Tests.ps1
+      - name: PowerShell 7
         shell: pwsh
-        run: |
-          $path = Join-Path $PWD 'dist/WinAudit-Standalone.ps1'
-          $tokens = $null
-          $parseErrors = $null
-          [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors)
-          if ($parseErrors.Count -gt 0) {
-              $parseErrors | Format-List
-              throw 'Standalone syntax validation failed.'
-          }
-          function global:Clear-Host { }
-          function global:Read-Host { param($Prompt) '0' }
-          try { & $path } finally { Remove-Item Function:\Read-Host; Remove-Item Function:\Clear-Host }
-          Write-Host 'Syntax and menu exit passed.'
+        run: .\tests\Features.Tests.ps1

@@ -35,6 +35,39 @@
 - AD mode requires the RSAT ActiveDirectory PowerShell module.
 - Event coverage depends on enabled Windows logs and retention.
 
+## Install Active Directory prerequisites (optional)
+
+**No compilation is required.** WinAudit runs as PowerShell scripts. RSAT is only required for the menu option that discovers computer objects using `Get-ADComputer`. Local audits and direct remote WinRM audits do **not** require RSAT.
+
+First check whether the module is present:
+
+```powershell
+Get-Module -ListAvailable ActiveDirectory
+.\Install-Prerequisites.ps1
+```
+
+If missing, open **Windows PowerShell as Administrator** and run:
+
+```powershell
+.\Install-Prerequisites.ps1 -Install
+```
+
+The installer uses Microsoft's built-in Windows mechanisms:
+
+- **Windows 10/11 Pro, Enterprise or Education (supported releases):** `Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0`
+- **Windows Server:** `Install-WindowsFeature RSAT-AD-PowerShell`
+
+On managed systems, installation may require Windows Update, an approved source, or administrator approval. RSAT may be unavailable on unsupported Windows editions. The script does not alter domain settings, enable WinRM, or install software from third-party websites.
+
+After installation, verify:
+
+```powershell
+Import-Module ActiveDirectory
+Get-Command Get-ADComputer
+```
+
+Then start WinAudit and choose **[4] Active Directory computer inventory**. Example input: `dc01.ad.example.com`; optional search base: `OU=Workstations,DC=ad,DC=example,DC=com`. Credentials must be authorized for the directory.
+
 ## Run
 
 ```powershell

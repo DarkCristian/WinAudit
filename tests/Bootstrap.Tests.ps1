@@ -1,9 +1,9 @@
 #requires -Version 5.1
 $ErrorActionPreference='Stop'
-$root=Split-Path -Parent $PSScriptRoot
+$script:bootstrapTestRoot=Split-Path -Parent $PSScriptRoot
 # Cargar solo definiciones de funciones del launcher; nunca su invocacion de red.
 $tokens=$null;$errors=$null
-$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'install.ps1'),[ref]$tokens,[ref]$errors)
+$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $script:bootstrapTestRoot 'install.ps1'),[ref]$tokens,[ref]$errors)
 if ($errors.Count) {throw 'Sintaxis del launcher invalida.'}
 foreach ($fn in $ast.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$false)) {
     . ([scriptblock]::Create($fn.Extent.Text))
@@ -14,7 +14,7 @@ function Invoke-WebRequest {
     param($Uri,$OutFile,[switch]$UseBasicParsing,$MaximumRedirection,$TimeoutSec,$ErrorAction)
     if ($Uri -notmatch '^https://raw\.githubusercontent\.com/DarkCristian/WinAudit/[a-f0-9]{40}/dist/WinAudit-Standalone\.ps1$') {throw 'Fuente no inmutable.'}
     if (-not $UseBasicParsing -or $MaximumRedirection -ne 0 -or $TimeoutSec -ne 30) {throw 'Opciones HTTP inseguras.'}
-    if ($script:tamper) {[IO.File]::WriteAllText($OutFile,'throw "tampered"')} else {[IO.File]::Copy((Join-Path $root 'dist/WinAudit-Standalone.ps1'),$OutFile)}
+    if ($script:tamper) {[IO.File]::WriteAllText($OutFile,'throw "tampered"')} else {[IO.File]::Copy((Join-Path $script:bootstrapTestRoot 'dist/WinAudit-Standalone.ps1'),$OutFile)}
     $script:downloadPath=$OutFile
 }
 function Invoke-WALaunchScript {

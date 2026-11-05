@@ -108,6 +108,7 @@ function Start-WAEventCapture {
     $treePath = Join-Path $Directory ($runId + '-tree.txt')
     $processPath = Join-Path $Directory ($runId + '-processes.json')
     $processNodes = @{}
+    $fileEvidenceCache = @{}
     $links = New-Object 'System.Collections.Generic.List[object]'
     [IO.File]::WriteAllText($journal, '', (New-Object Text.UTF8Encoding($false)))
     $seen = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -126,7 +127,7 @@ function Start-WAEventCapture {
         while ((Get-Date) -lt $StartTime) { Start-Sleep -Seconds 1 }
         $metadata.State = 'Capturando'
         while ($true) {
-            try { Update-WAObservedProcesses -Nodes $processNodes -TargetPid $TargetPid -ProcessName $ProcessName }
+            try { Update-WAObservedProcesses -Nodes $processNodes -TargetPid $TargetPid -ProcessName $ProcessName -FileEvidenceCache $fileEvidenceCache }
             catch { $metadata.ProcessIssues = @(@($metadata.ProcessIssues) + @($_.Exception.Message) | Select-Object -Unique) }
             $metadata.ObservedProcessCount = $processNodes.Count
             ConvertTo-Json -InputObject @($processNodes.Values) -Depth 8 | Set-Content -LiteralPath $processPath -Encoding UTF8
@@ -174,7 +175,7 @@ function Start-WAEventCapture {
         if ($metadata.State -in @('Esperando','Capturando')) { $metadata.State = 'Interrumpida' }
         $metadata.ObservedProcessCount = $processNodes.Count
         ConvertTo-Json -InputObject @($processNodes.Values) -Depth 8 | Set-Content -LiteralPath $processPath -Encoding UTF8
-        [void](Export-WACaptureTree -Nodes $processNodes -Metadata $metadata -Path $treePath -Links $links.ToArray())
+        [void](Export-WACaptureTree -Nodes $processNodes -Metadata $metadata -Path $treePath -Links $links.ToArray() -ShowOnScreen)
         $metadata.FinishedAt = (Get-Date).ToString('o')
         $metadata.UpdatedAt = $metadata.FinishedAt
         $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8

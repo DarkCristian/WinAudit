@@ -1,8 +1,8 @@
 Set-StrictMode -Version Latest
 function Get-WAProcesses {
     [CmdletBinding()]
-    param()
-    Get-CimInstance -ClassName Win32_Process | ForEach-Object {
+    param([string]$Name)
+    Get-CimInstance -ClassName Win32_Process | Where-Object { -not $Name -or $_.Name -ieq $Name } | ForEach-Object {
         [pscustomobject]@{
             Name = $_.Name
             ProcessId = $_.ProcessId

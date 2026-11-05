@@ -362,9 +362,11 @@ No hay compilación de aplicación:
 ```powershell
 .\tools\Build-Standalone.ps1
 .\tools\Build-Standalone.ps1 -Check
+.\tests\Security.Tests.ps1
+.\tests\Bootstrap.Tests.ps1
 .\tests\Features.Tests.ps1
 .\tests\Reputation.Tests.ps1
 .\tests\Directory.Tests.ps1
 ```
 
-El [workflow aprobado de v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065) ejecuta las pruebas en PowerShell 5.1 y 7 y genera un artefacto con bytes canónicos y SHA-256. Las pruebas usan datos sintéticos y sustituyen las conexiones de VirusTotal, LDAP/LDAPS, RSAT y WinRM. No validan un certificado, dominio, permisos o respuesta real de esos servicios.
+El [workflow aprobado de la revisión de seguridad](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225) ejecuta las pruebas en PowerShell 5.1 y 7 y genera un artefacto con bytes canónicos y SHA-256. Las pruebas usan datos sintéticos y sustituyen las conexiones de VirusTotal, LDAP/LDAPS, RSAT y WinRM. No validan un certificado, dominio, permisos o respuesta real de esos servicios.

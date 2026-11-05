@@ -698,7 +698,8 @@ function Get-WADirectoryComputers {
             }
             $pageResponses=@($response.Controls | Where-Object {$_.Type -eq '1.2.840.113556.1.4.319' -and $_.PSObject.Properties['Cookie']})
             if ($pageResponses.Count -ne 1) {throw 'WinAudit LDAP: el servidor no confirmo paginacion; no se presenta un inventario completo.'}
-            $cookie=$pageResponses[0].Cookie
+            $cookie=[byte[]]$pageResponses[0].Cookie
+            if ($null -eq $cookie) {$cookie=[byte[]]@()}
             if ($cookie.Length -gt 0 -and $items.Count -ge $MaxComputers) {$truncated=$true}
             if ($truncated) {break}
             if ($cookie.Length -gt 0 -and -not $cookies.Add([Convert]::ToBase64String($cookie))) {throw 'WinAudit LDAP: el servidor repitio una pagina.'}

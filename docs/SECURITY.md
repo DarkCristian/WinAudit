@@ -5,7 +5,7 @@ WinAudit consulta evidencia y exporta informes locales. No habilita WinRM, cambi
 ## Alcance y limites
 
 - Ejecutalo solo en sistemas que administras o estas autorizado a evaluar.
-- Active Directory requiere RSAT ActiveDirectory y permisos de lectura del directorio.
+- El proveedor RSAT requiere ActiveDirectory; LDAP/LDAPS no requiere RSAT. Ambos necesitan permisos de lectura del directorio.
 - El inventario remoto requiere WinRM configurado y acceso autorizado.
 - La disponibilidad de Security, PowerShell y Sysmon depende de configuracion y retencion.
 - Un PID puede reutilizarse. Una coincidencia no identifica por si sola una instancia historica.
@@ -40,3 +40,19 @@ Fuentes oficiales:
 ## Reportar vulnerabilidades
 
 Usa un aviso privado de seguridad de GitHub para vulnerabilidades. No publiques credenciales, logs privados ni identificadores corporativos en issues publicos.
+
+## LDAP/LDAPS y WinRM
+
+El descubrimiento de directorio no otorga acceso remoto. Los permisos de lectura AD y los permisos WinRM se manejan por separado; seleccionar un equipo del inventario no implica que sea accesible.
+
+LDAP/LDAPS utiliza SASL Kerberos por defecto; Negotiate es una opcion explicita. No se implementa autenticacion Basic/Anonymous. En LDAPS se usa TLS con la validacion normal de Windows, sin callbacks que acepten certificados arbitrarios. En LDAP se exige firma y sellado de sesion. No hay downgrade ni fallback silencioso entre protocolos, ni se modifica la configuracion del cliente o del dominio.
+
+Se restringen los destinos a nombres DNS y se desactivan referrals. Los filtros de nombre escapan parentesis, barra inversa y NUL; solo `*` conserva significado de comodin. SearchBase se transmite como DN separado, no se concatena a un filtro. Las busquedas paginadas tienen timeout y limite local, y los resultados truncados quedan identificados. Las conexiones se liberan en un bloque finally.
+
+WinRM usa Kerberos por defecto; admite HTTPS cuando se solicita. No habilita WinRM, agrega TrustedHosts ni omite validacion de certificados. Las credenciales de LDAP no se reutilizan automaticamente en WinRM, y no se exportan contrasenas.
+
+Referencias oficiales:
+
+- [LdapConnection y autenticacion](https://learn.microsoft.com/en-us/dotnet/api/system.directoryservices.protocols.ldapconnection)
+- [Opciones de sesion LDAP](https://learn.microsoft.com/en-us/dotnet/api/system.directoryservices.protocols.ldapsessionoptions)
+- [Control de paginacion](https://learn.microsoft.com/en-us/dotnet/api/system.directoryservices.protocols.pageresultrequestcontrol)

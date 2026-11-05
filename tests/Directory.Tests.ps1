@@ -37,7 +37,8 @@ function Assert-Directory($Condition,$Message) {if (-not $Condition) {throw $Mes
         if ($page.PageSize -ne 1 -or -not $page.IsCritical) {throw 'Paginacion no solicitada correctamente'}
         if ($script:Pages -eq 2 -and $page.Cookie.Length -eq 0) {throw 'No reutilizo la cookie'}
         $n=$script:Pages
-        $cookie=if ($n -eq 1 -or $script:Mode -eq 'repeatCookie') {[byte[]]@(1)} else {[byte[]]@()}
+        $cookie=[byte[]]@()
+        if ($n -eq 1 -or $script:Mode -eq 'repeatCookie') {$cookie=[byte[]]@(1)}
         $controls=@([pscustomobject]@{Type='1.2.840.113556.1.4.319';Cookie=$cookie})
         if ($script:Mode -eq 'noPaging') {$controls=@()}
         $uac=if ($n -eq 1) {'4096'} else {'4098'}

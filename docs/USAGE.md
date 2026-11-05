@@ -1,16 +1,16 @@
 # Guía de uso
 
-Referencia de WinAudit **v0.4.0-alpha**. Los comandos usan `WinAudit.ps1` desde el repositorio. Para el archivo independiente, reemplazá ese nombre por `WinAudit-Standalone.ps1`. Ambos requieren Windows y PowerShell 5.1 o 7.
+Referencia de **main con correcciones de seguridad del 05/11/2026**, posteriores a v0.4.0-alpha. El tag y el asset anteriores no incluyen estas correcciones. Los comandos usan `WinAudit.ps1` desde el repositorio. Para el archivo independiente, reemplazá ese nombre por `WinAudit-Standalone.ps1`. Requieren Windows actualizado y Windows PowerShell 5.1, o una rama estable de PowerShell 7 con mínimo 7.4.21, 7.5.12 o 7.6.7 respectivamente. Ramas anteriores se rechazan. WinAudit no instala parches de Windows ni verifica su nivel de actualización.
 
 [Volver al README](../README.md) · [Modelo de seguridad y limitaciones](SECURITY.md)
 
 ## Obtener y comprobar la versión
 
-Podés descargar el [standalone de la release](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/WinAudit-Standalone.ps1), clonar el tag o iniciar el menú con el bootstrapper de `main`:
+Para usar las correcciones, descargá el [standalone actual](../dist/WinAudit-Standalone.ps1), cloná `main` o usá el bootstrapper:
 
 ```powershell
-# Copia del código publicado
-git clone --branch v0.4.0-alpha https://github.com/DarkCristian/WinAudit.git
+# Copia actual con correcciones
+git clone https://github.com/DarkCristian/WinAudit.git
 cd WinAudit
 .\WinAudit.ps1
 
@@ -18,19 +18,19 @@ cd WinAudit
 irm https://raw.githubusercontent.com/DarkCristian/WinAudit/main/install.ps1 | iex
 ```
 
-El bootstrapper no recibe los parámetros de auditoría de los ejemplos siguientes: descarga los componentes y abre el menú. Para usar esos parámetros, descargá el standalone o trabajá desde una copia del repositorio. El bootstrapper no instala RSAT ni valida un checksum fijado a la release; `main` puede cambiar.
+El bootstrapper abre el menú, sin reenviar parámetros. Descarga un standalone de un commit inmutable y valida su SHA-256 antes de ejecutarlo, sin redirecciones HTTP y con timeout de 30 segundos. El propio launcher de `main` sigue siendo código remoto: descargalo y revisalo antes si necesitás aprobación previa. No instala RSAT. [Detalles y SHA del código revisado](SECURITY_REVIEW.md).
 
-SHA-256 del asset `WinAudit-Standalone.ps1` de v0.4.0-alpha:
+SHA-256 del standalone corregido fijado por el bootstrapper:
 
 ```text
-ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875
+369a7d9518a240a4a81e76a2dd7acb05146be228eb4d8ad27c2c0e0100229f14
 ```
 
 ```powershell
 Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256
 ```
 
-Compará el resultado con el valor anterior o con [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/SHA256SUMS.txt). No cambies políticas de ejecución o protecciones para resolver un bloqueo sin conocer la política de tu entorno.
+Compará con el valor anterior para la revisión `6e883047e3b11ba19e68bc19fc2f977f745842ec`. Las sumas del asset v0.4.0-alpha corresponden al código anterior y son distintas. No cambies políticas de ejecución o protecciones para resolver un bloqueo sin conocer la política de tu entorno.
 
 ## Menú y permisos
 
@@ -92,6 +92,10 @@ Por nombre, aunque el proceso haya terminado:
 Los formatos de texto se interpretan explícitamente, sin depender de la configuración regional. Usá objetos `[datetime]` con la hora local prevista; no se convierten automáticamente horas de un host remoto. Los informes de eventos registran la zona horaria del equipo donde se ejecuta WinAudit.
 
 El fin debe ser posterior al inicio. En la opción 2, dejar el inicio vacío toma las últimas 24 horas y dejar el fin vacío toma la hora actual. Para un fin futuro, usá la opción 7 o `-Monitor`.
+
+### Límites de consulta
+
+`-MaxEventsPerLog` admite 1–100000, predeterminado 10000 por registro y consulta. Se retienen los eventos más recientes antes de filtrar por proceso; si se alcanza el tope, el estado es `Limitado`. Acotá el intervalo para recuperar períodos omitidos. En captura, el límite se aplica a cada lectura, no al total acumulado ni al tamaño final del informe.
 
 ### Fuentes y coincidencias
 
@@ -232,6 +236,8 @@ LDAPS usa TLS y la validación normal de Windows. LDAP usa SASL con firma y sell
 
 Sin SearchBase, LDAP/LDAPS consulta un contexto de dominio; no enumera automáticamente todo el bosque. No sigue referrals a otros servidores. Escapa caracteres de control del filtro y solicita páginas de hasta 500 objetos por defecto. La conexión LDAP y cada operación de búsqueda tienen tiempo de espera; no es un plazo global para todo el inventario.
 
+La conexión LDAP directa tiene además un máximo de 1000 páginas; `Get-WADirectoryComputers -MaxPages` permite 1–10000 al usar el módulo. Superar ese máximo interrumpe la consulta con error. No es un parámetro de la interfaz principal.
+
 Si se alcanza MaxComputers, se avisa y se marca `QueryTruncated`. En RSAT, alcanzar exactamente el límite se trata de forma conservadora como posible truncamiento. Si falla la paginación o la conexión, no se presenta un inventario parcial como completo. LastLogonDate proviene de datos aproximados de AD y no prueba disponibilidad.
 
 ### RSAT opcional
@@ -316,6 +322,12 @@ La clave no se exporta en los informes. La carga oculta usa memoria de sesión; 
 | `-ComputerName` | Inventario remoto y opciones WinRM; sin selector, intervalo, captura, directorio ni VirusTotal |
 
 No pases PID y nombre juntos. En comandos, descubrimiento y WinRM son ejecuciones separadas; el menú 4 ofrece la selección entre ambos pasos.
+
+## Rutas locales y protección de salida
+
+Los archivos de evidencia y destinos de informe deben ser locales: se rechazan rutas UNC, unidades de red, dispositivos, ADS y componentes con junction/reparse point. Esto evita que una ruta aportada por un proceso provoque una lectura SMB autenticada. Si la ruta está bloqueada, la evidencia queda no disponible o se informa el error; no desactives la validación para seguirla. Los nuevos archivos de informe no sobrescriben otros existentes.
+
+La pantalla reemplaza controles de terminal y marcas bidi en campos de texto; JSON/XML conservan datos crudos. Abrilos en un visor que trate el contenido como datos. Las carpetas heredan los permisos del destino: elegí una ubicación privada y controlá su retención.
 
 ## Ubicación y manejo de informes
 

@@ -11,6 +11,7 @@ param(
     [Alias('ProcessName')][ValidatePattern('^[^\\/:*?"<>|]+\.exe$')][string]$FindProcess,
     [string]$FilePath,
     [ValidateSet('SHA256','MD5','Both')][string]$HashAlgorithm = 'SHA256',
+    [switch]$VirusTotal,
     [switch]$Monitor,
     [switch]$FullScan,
     [string]$ComputerName,
@@ -22,6 +23,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Root = $PSScriptRoot
+Import-Module (Join-Path $script:Root 'Modules\Reputation.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Core.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Events.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Directory.psm1') -Force
@@ -69,6 +71,15 @@ function Save-Report($Data, [string]$Name) {
 }
 function Invoke-LocalProcesses([string]$Name) {
     $items = @(Get-WAProcesses -Name $Name)
+    if ($script:vtAutomatic -and $script:vtContext) {
+        foreach ($item in $items) {
+            if ($item.ExecutablePath) {
+                $fileEvidence=[pscustomobject]@{Path=$item.ExecutablePath}
+                Add-OptionalReputation -Evidence $fileEvidence
+                $item | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $fileEvidence.VirusTotal -Force
+            }
+        }
+    }
     Show-Result ($items | Select-Object -First 40 Name,ProcessId,ParentProcessId,CreationDate,ExecutablePath)
     Write-Host ("Procesos: {0}. Se muestran hasta 40." -f $items.Count)
     return $items
@@ -76,7 +87,7 @@ function Invoke-LocalProcesses([string]$Name) {
 function Invoke-EventInvestigation {
     param([int]$TargetPid = 0,[string]$Name,[datetime]$From,[datetime]$Until,[switch]$Capture)
     if ($Capture) {
-        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds)
+        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds -VirusTotalContext $(if ($script:vtAutomatic) {$script:vtContext} else {$null}))
         return
     }
     if ($Until -gt (Get-Date)) { throw 'Para un fin futuro usa -Monitor o la opcion 7 del menu.' }
@@ -84,7 +95,7 @@ function Invoke-EventInvestigation {
     Show-Result $processes
     $evidence = @($processes | ForEach-Object {
         if ($_.ExecutablePath) {
-            try { Get-WAFileEvidence -Path $_.ExecutablePath -HashAlgorithm $HashAlgorithm } catch { Write-Warning $_.Exception.Message }
+            try { $fileEvidence=Get-WAFileEvidence -Path $_.ExecutablePath -HashAlgorithm $HashAlgorithm; Add-OptionalReputation -Evidence $fileEvidence; $fileEvidence } catch { Write-Warning $_.Exception.Message }
         }
     })
     $status = New-Object 'System.Collections.Generic.List[object]'
@@ -131,9 +142,62 @@ function Invoke-FileEvidenceMenu {
     $option = Read-Host 'Hash: [1] SHA-256 [2] MD5 [3] Ambos'
     $algorithm = switch ($option) { '1' {'SHA256'} '2' {'MD5'} '3' {'Both'} default {throw 'Opcion invalida.'} }
     $evidence = Get-WAFileEvidence -Path $path -HashAlgorithm $algorithm
+    Add-OptionalReputation -Evidence $evidence
     $evidence | Format-List | Out-Host
     Save-Report $evidence 'file-evidence'
 }
+function Add-OptionalReputation {
+    param([Parameter(Mandatory)]$Evidence)
+    if (-not $script:vtAutomatic -or $null -eq $script:vtContext) { return }
+    try {
+        $sha=(Get-FileHash -LiteralPath $Evidence.Path -Algorithm SHA256 -ErrorAction Stop).Hash
+        $report=Get-WAVirusTotalReport -SHA256 $sha -Context $script:vtContext
+    } catch { $report=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No se pudo leer el hash; no se envio la consulta.'} }
+    $Evidence | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $report -Force
+}
+function Invoke-VirusTotalMenu {
+    while ($true) {
+        Write-Host 'VirusTotal opcional: envia solo SHA-256 y clave al proveedor; no archivos, rutas ni logs.'
+        Write-Host 'Usa una cuenta/licencia habilitada para tu uso. Restricciones: https://docs.virustotal.com/reference/public-vs-premium-api'
+        Write-Host ('Configurado: {0} | Enriquecer auditorias al finalizar: {1}' -f ($null -ne $script:vtContext),$script:vtAutomatic)
+        Write-Host '[1] Cargar clave para esta sesion (o VIRUSTOTAL_API_KEY)'
+        Write-Host '[2] Consultar manualmente un hash SHA-256'
+        Write-Host '[3] Activar/desactivar enriquecimiento de auditorias'
+        Write-Host '[4] Desactivar y olvidar clave de esta sesion'
+        Write-Host '[0] Volver'
+        switch (Read-Host 'Opcion avanzada') {
+            '1' {
+                $key=if ($env:VIRUSTOTAL_API_KEY) {ConvertTo-SecureString $env:VIRUSTOTAL_API_KEY -AsPlainText -Force} else {Read-Host 'API key (oculta; solo memoria de esta sesion)' -AsSecureString}
+                $script:vtContext=New-WAVirusTotalContext -ApiKey $key
+                Write-Host 'Clave cargada. El enriquecimiento sigue desactivado hasta elegir opcion 3.'
+                $script:vtAutomatic=$false
+            }
+            '2' {
+                if ($null -eq $script:vtContext) {Write-Host 'Primero carga tu clave con opcion 1.'; continue}
+                $hash=Read-Host 'SHA-256 a enviar a VirusTotal'
+                $report=Get-WAVirusTotalReport -SHA256 $hash -Context $script:vtContext
+                $report | Format-List | Out-Host
+                Save-Report $report 'virustotal-reputation'
+            }
+            '3' {
+                if ($null -eq $script:vtContext) {Write-Host 'Primero carga tu clave con opcion 1.'; continue}
+                $script:vtAutomatic=-not $script:vtAutomatic
+            }
+            '4' { $script:vtAutomatic=$false; $script:vtContext=$null; Write-Host 'Integracion desactivada. La variable de entorno, si existe, no se modifica.' }
+            '0' { return }
+            default { Write-Host 'Opcion invalida.' }
+        }
+    }
+}
+$script:vtContext=$null
+$script:vtAutomatic=$false
+if ($VirusTotal) {
+    if ($env:VIRUSTOTAL_API_KEY) {
+        $script:vtContext=New-WAVirusTotalContext -ApiKey (ConvertTo-SecureString $env:VIRUSTOTAL_API_KEY -AsPlainText -Force)
+        $script:vtAutomatic=$true
+    } else { Write-Warning 'VirusTotal desactivado: no se configuro VIRUSTOTAL_API_KEY. La auditoria local continua.' }
+}
+if ($VirusTotal -and ($FullScan -or $ComputerName)) { throw '-VirusTotal solo admite busqueda, investigacion, archivo o captura local en esta version.' }
 $hasWindow = $PSBoundParameters.ContainsKey('StartTime') -or $PSBoundParameters.ContainsKey('EndTime')
 $from = if ($null -eq $StartTime) { if ($Monitor) {Get-Date} else {(Get-Date).AddHours(-24)} } else { ConvertTo-WADateTime $StartTime }
 $until = if ($null -eq $EndTime) { Get-Date } else { ConvertTo-WADateTime $EndTime }
@@ -141,6 +205,7 @@ if ($until -le $from) { throw 'El fin debe ser posterior al inicio.' }
 if ($FilePath) {
     if ($FindProcess -or $PIDToAudit -gt 0 -or $Monitor -or $ComputerName -or $FullScan -or $hasWindow) { throw '-FilePath solo admite -HashAlgorithm y -ReportDirectory.' }
     $evidence = Get-WAFileEvidence -Path $FilePath -HashAlgorithm $HashAlgorithm
+    Add-OptionalReputation -Evidence $evidence
     $evidence | Format-List | Out-Host
     Save-Report $evidence 'file-evidence'
     return
@@ -174,6 +239,7 @@ while ($true) {
     Write-Host '  [6] Buscar proceso activo por nombre (example.exe)'
     Write-Host '  [7] Capturar eventos hasta un horario futuro'
     Write-Host '  [8] Verificar archivo: firma, SHA-256, MD5 o ambos'
+    Write-Host '  [9] Avanzado: VirusTotal opcional (API key propia)'
     Write-Host '  [0] Salir'
     $choice = Read-Host 'Selecciona una opcion'
     try {
@@ -186,6 +252,7 @@ while ($true) {
             '6' { $name = Read-ExecutableName; Save-Report ([pscustomobject]@{Query=$name; CurrentProcesses=@(Invoke-LocalProcesses -Name $name)}) 'process-search' }
             '7' { Invoke-InteractiveEvents -Capture }
             '8' { Invoke-FileEvidenceMenu }
+            '9' { Invoke-VirusTotalMenu }
             '0' { return }
             default { Write-Host 'Opcion invalida.' -ForegroundColor Yellow }
         }

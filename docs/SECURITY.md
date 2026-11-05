@@ -132,7 +132,7 @@ El tag v0.4.0-alpha y sus assets permanecen fijados a la publicación. Corregir 
 
 ## Estado de validación
 
-El [workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065) valida sintaxis, ensamblado y bytes del standalone, fechas, búsquedas, eventos sintéticos, captura, árbol, hashes, errores y opt-in de reputación, LDAP/LDAPS/RSAT y WinRM con respuestas simuladas, en PowerShell 5.1 y 7.
+El [workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225) valida sintaxis, ensamblado y bytes del standalone, fechas, búsquedas, eventos sintéticos, captura, árbol, hashes, errores y opt-in de reputación, LDAP/LDAPS/RSAT y WinRM con respuestas simuladas, en PowerShell 5.1 y 7.
 
 No constituye una prueba contra un DC real, validación de certificados de una organización, prueba de permisos remotos ni consulta real a VirusTotal. Esas pruebas operativas siguen pendientes en un entorno autorizado. Esta versión conserva el estado Alpha.
 

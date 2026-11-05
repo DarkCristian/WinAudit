@@ -124,15 +124,11 @@ function Add-WAVirusTotalToProcesses {
     foreach ($node in $Nodes.Values) {
         $reputation=$null
         try {
-            if (-not $node.ExecutablePath) { throw 'Sin ruta' }
-            # Verifica que MD5 actual coincida con el capturado antes de asociar reputacion.
-            $before=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm MD5 -ErrorAction Stop
-            $sha=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm SHA256 -ErrorAction Stop
-            $after=Get-FileHash -LiteralPath $node.ExecutablePath -Algorithm MD5 -ErrorAction Stop
-            if (-not $node.MD5 -or $before.Hash -ine $node.MD5 -or $after.Hash -ine $node.MD5) { throw 'Archivo diferente' }
-            $reputation=Get-WAVirusTotalReport -SHA256 $sha.Hash -Context $Context
+            if (-not $node.PSObject.Properties['SHA256'] -or $node.SHA256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Sin SHA256 capturado' }
+            # Consulta el SHA256 preservado al observar la instancia, aunque el proceso haya terminado.
+            $reputation=Get-WAVirusTotalReport -SHA256 $node.SHA256 -Context $Context
         } catch {
-            $reputation=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No se pudo asociar el SHA-256 al archivo observado; no se envio la consulta.'}
+            $reputation=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No hay un SHA-256 capturado para esta instancia; no se envio la consulta.'}
         }
         $node | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $reputation -Force
     }
@@ -191,12 +187,13 @@ function Get-WATreeFileEvidence {
     [CmdletBinding()]
     param([string]$Path,[hashtable]$Cache=@{})
     $evidence = [pscustomobject]@{
-        MD5=$null; SignatureStatus='NoDisponible'; Signer=$null
-        FileEvidenceAt=(Get-Date).ToString('o'); MD5Error=$null; SignatureError=$null
+        MD5=$null; SHA256=$null; SignatureStatus='NoDisponible'; Signer=$null
+        FileEvidenceAt=(Get-Date).ToString('o'); MD5Error=$null; SHA256Error=$null; SignatureError=$null
     }
     if ([string]::IsNullOrWhiteSpace($Path)) {
         $evidence.MD5Error='Ruta de ejecutable no disponible.'
         $evidence.SignatureError=$evidence.MD5Error
+        $evidence.SHA256Error=$evidence.MD5Error
         return $evidence
     }
     try {
@@ -208,11 +205,14 @@ function Get-WATreeFileEvidence {
         if ($Cache.ContainsKey($cacheKey)) { return $Cache[$cacheKey] }
     } catch {
         $evidence.MD5Error=$_.Exception.Message
+        $evidence.SHA256Error=$_.Exception.Message
         $evidence.SignatureError=$_.Exception.Message
         return $evidence
     }
     try { $evidence.MD5=(Get-FileHash -LiteralPath $Path -Algorithm MD5 -ErrorAction Stop).Hash }
     catch { $evidence.MD5Error=$_.Exception.Message }
+    try { $evidence.SHA256=(Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash }
+    catch { $evidence.SHA256Error=$_.Exception.Message }
     try {
         $signature=Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
         $evidence.SignatureStatus=[string]$signature.Status
@@ -222,11 +222,11 @@ function Get-WATreeFileEvidence {
         $after=Get-Item -LiteralPath $Path -ErrorAction Stop
         if ($after.Length -ne $length -or $after.LastWriteTimeUtc.Ticks -ne $writeTicks) { throw 'El archivo cambio durante la lectura de evidencia.' }
     } catch {
-        $evidence.MD5=$null; $evidence.SignatureStatus='NoDisponible'; $evidence.Signer=$null
-        $evidence.MD5Error=$_.Exception.Message; $evidence.SignatureError=$_.Exception.Message
+        $evidence.MD5=$null; $evidence.SHA256=$null; $evidence.SignatureStatus='NoDisponible'; $evidence.Signer=$null
+        $evidence.MD5Error=$_.Exception.Message; $evidence.SHA256Error=$_.Exception.Message; $evidence.SignatureError=$_.Exception.Message
     }
     # Reutiliza solo resultados completos; los errores se pueden reintentar con otra instancia.
-    if (-not $evidence.MD5Error -and -not $evidence.SignatureError) { $Cache[$cacheKey]=$evidence }
+    if (-not $evidence.MD5Error -and -not $evidence.SHA256Error -and -not $evidence.SignatureError) { $Cache[$cacheKey]=$evidence }
     return $evidence
 }
 
@@ -272,7 +272,7 @@ function Update-WAObservedProcesses {
         $Nodes[$key] = [pscustomobject]@{
             Key=$key; Name=$proc.Name; ProcessId=$proc.ProcessId; ParentProcessId=$proc.ParentProcessId
             CreationDate=([datetime]$proc.CreationDate).ToString('o'); ParentKey=$parentKey; ParentName=$parentName
-            MD5=$fileEvidence.MD5; SignatureStatus=$fileEvidence.SignatureStatus; Signer=$fileEvidence.Signer
+            MD5=$fileEvidence.MD5; SHA256=$fileEvidence.SHA256; SHA256Error=$fileEvidence.SHA256Error; SignatureStatus=$fileEvidence.SignatureStatus; Signer=$fileEvidence.Signer
             FileEvidenceAt=$fileEvidence.FileEvidenceAt; MD5Error=$fileEvidence.MD5Error; SignatureError=$fileEvidence.SignatureError
             IsRoot=[bool]$root; ExecutablePath=$proc.ExecutablePath; FirstSeen=$at.ToString('o'); LastSeen=$at.ToString('o')
             Evidence='Win32_Process: PID, PPID y fecha de creacion en la misma instantanea'

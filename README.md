@@ -22,7 +22,7 @@ Esta versión incorpora búsqueda exacta por nombre con todos los PID activos, c
 
 | Área | Avance verificable |
 | --- | --- |
-| Código y distribución | Publicados en `v0.2.0-alpha`; el standalone de `main` coincide con el del tag al actualizar esta documentación |
+| Código y distribución | Publicados en `v0.2.0-alpha`; el asset permanece fijado al tag; `main` contiene además los avances indicados debajo |
 | Pruebas en Windows PowerShell 5.1 y PowerShell 7 | [Aprobadas con datos sintéticos](https://github.com/DarkCristian/WinAudit/actions/runs/42104230332): sintaxis, ensamblado, fechas, búsqueda, correlación, captura, árbol con PID reutilizado y hashes conocidos |
 | Validación operativa | Pendiente contra registros reales, permisos, WinRM y AD en un entorno Windows autorizado |
 | Próximas funciones | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos; todavía no implementados |
@@ -58,6 +58,25 @@ Write-Host 'SHA-256 verificado.'
 
 Estos identificadores corresponden a `v0.2.0-alpha`; futuros cambios en `main` pueden tener otros hashes.
 
+## Avance posterior a v0.2.0-alpha en main
+
+El árbol del monitoreo ahora incluye **PID | MD5 | Signature | Firmante**, tanto en el informe TXT como en pantalla al finalizar. El JSON conserva el momento de lectura y los errores de evidencia por separado. Un archivo sin firma se muestra como `NotSigned`; si no se puede leer, se indica `NoDisponible`.
+
+```text
++-- example.exe PID 1010 | MD5: <32 caracteres hexadecimales> | Signature: Valid | Firmante: CN=Example Publisher | creado <fecha>
+```
+
+Ejemplo ilustrativo. El hash y la firma describen el archivo accesible al observar la instancia, no su contenido histórico ni la memoria del proceso. Las instancias del mismo archivo pueden reutilizar evidencia dentro de la captura si no cambian ruta, tamaño y fecha de modificación.
+
+Este cambio está en el [standalone actual de main](https://raw.githubusercontent.com/DarkCristian/WinAudit/main/dist/WinAudit-Standalone.ps1); **el asset de v0.2.0-alpha todavía conserva la versión anterior**.
+
+| Identificador del standalone con MD5 y firma en el árbol | Valor |
+| --- | --- |
+| Commit de implementación | [`981e85ec7c99fbd08122d32b4ad4ee9d55ab00fa`](https://github.com/DarkCristian/WinAudit/commit/981e85ec7c99fbd08122d32b4ad4ee9d55ab00fa) |
+| SHA-256 del archivo en ese commit | `658adf4c9883a21fab9e7f499c8b694f612f0ed5820551251c94977db99cd057` |
+
+La [validación automatizada](https://github.com/DarkCristian/WinAudit/actions/workflows/validate-standalone.yml) incluye hashes conocidos, firma válida simulada, ausencia de firma, errores independientes de hash/firma, caché y coincidencia del formato de pantalla y TXT.
+
 ## Funciones
 
 | Función | Estado |
@@ -68,7 +87,7 @@ Estos identificadores corresponden a `v0.2.0-alpha`; futuros cambios en `main` p
 | Consulta histórica por PID o nombre e intervalo horario | Implementación inicial |
 | Búsqueda exacta de ejecutables activos, con todos sus PID | Implementada |
 | Captura local hasta un horario futuro, con espera y guardado progresivo | Implementada en la sesión actual |
-| Informe TXT de árbol observado y relaciones de procesos | Implementado; limitado a evidencia disponible |
+| Informe TXT y en pantalla de árbol observado, con MD5 y firma por proceso | Implementado; limitado a evidencia disponible |
 | Inventario de procesos remotos mediante WinRM | Implementado |
 | Descubrimiento de equipos de AD mediante RSAT | Implementado |
 | Exportación local de informes JSON | Implementada |

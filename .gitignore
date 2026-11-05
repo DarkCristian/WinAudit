@@ -1,0 +1,18 @@
+# Sensitive local output
+Reports/
+*.credential
+*.secret
+*.pfx
+*.p12
+*.key
+*.pem
+*.clixml
+*.log
+*.evtx
+*.dmp
+*.dump
+.env
+.env.*
+local.settings.json
+.vscode/
+.idea/

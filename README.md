@@ -1,155 +1,57 @@
 # WinAudit
 
-```text
- __        ___         _             _ _ _
- \ \      / (_)_ __   / \  _   _  __| (_) |_
-  \ \ /\ / /| | '_ \ / _ \| | | |/ _` | | __|
-   \ V  V / | | | | / ___ \ |_| | (_| | | |_
-    \_/\_/  |_|_| |_/_/   \_\__,_|\__,_|_|\__|
+**Auditoría de procesos y eventos de Windows con PowerShell.**
 
-    AUDITOR DE SEGURIDAD Y ANALISIS FORENSE DE WINDOWS
-```
+WinAudit permite buscar procesos por PID o nombre, verificar firmas Authenticode y hashes, consultar eventos históricos y capturar evidencia durante un intervalo. Genera informes locales y árboles de procesos; descubre equipos de Active Directory mediante LDAP/LDAPS o RSAT y consulta inventarios remotos mediante WinRM. VirusTotal es una integración avanzada, opcional y desactivada por defecto.
 
-**WinAudit** es una herramienta de código abierto, desarrollada en PowerShell nativo, para investigar procesos de Windows y sus eventos por PID o nombre, consultar intervalos históricos, monitorear hasta un horario futuro y generar informes de árbol de procesos. Incluye verificación Authenticode, hashes SHA-256/MD5, inventario remoto autorizado mediante WinRM y descubrimiento de equipos en Active Directory.
+> **v0.4.0-alpha — pre-release para pruebas.** Hay pruebas automatizadas con datos y conexiones simulados en Windows PowerShell 5.1 y PowerShell 7. Sigue pendiente la validación operativa con registros reales, un dominio, hosts remotos y una cuenta autorizada de VirusTotal. WinAudit no determina automáticamente si un proceso es malicioso.
 
-> **Versión Alpha para pruebas.** El proyecto incluye [pruebas automatizadas](https://github.com/DarkCristian/WinAudit/actions/workflows/validate-standalone.yml) para Windows PowerShell 5.1 y PowerShell 7, con eventos sintéticos, validación de fechas y comprobación del archivo independiente. Las auditorías reales de procesos, registros, WinRM y AD todavía requieren validación en un entorno Windows autorizado. No debe considerarse una herramienta completa de adquisición forense.
+[Descargar v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha) · [Guía de uso](docs/USAGE.md) · [Modelo de seguridad y limitaciones](docs/SECURITY.md) · [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065)
 
-## Versión y avance — v0.4.0-alpha
+## Funciones y alcance
 
-**[WinAudit v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha)** incorpora descubrimiento de equipos por LDAP/LDAPS sin RSAT y selección de un host para inventario WinRM. Incluye también VirusTotal opcional en el menú avanzado 9. Conserva consultas históricas, captura por horarios, árbol en TXT/pantalla con MD5 y firma, e inventarios local, remoto y de Active Directory.
-
-| Área | Avance |
+| Función | Implementación actual |
 | --- | --- |
-| Auditoría local | Procesos, firmas, hashes SHA-256/MD5, intervalos y captura local implementados |
-| Árbol e informes | PID, MD5, Signature y firmante en TXT y pantalla; JSON/JSONL con evidencia |
-| VirusTotal | Consulta manual por SHA-256 y enriquecimiento local opcional; apagado por defecto |
-| Validación | [Workflow de Windows PowerShell 5.1 y PowerShell 7](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065); API simulada, sin claves reales ni solicitudes externas |
-| Validación operativa | Pendiente contra registros reales, permisos, WinRM, AD y una cuenta autorizada de VirusTotal |
-| Próximas funciones | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos |
+| Procesos locales | Nombre, PID, PID padre, creación, ruta y argumentos, cuando Windows permite leerlos |
+| Búsqueda | Nombre exacto del ejecutable, sin distinguir mayúsculas; devuelve todos los PID activos coincidentes |
+| Eventos históricos | PID o nombre, inicio y fin; consulta registros locales existentes de Security, PowerShell y Sysmon |
+| Captura por horario | Espera hasta el inicio y consulta hasta el fin, dentro de la sesión abierta; no crea tareas programadas |
+| Árbol de procesos | Instantáneas con identidad PID + creación; TXT y pantalla con MD5, Signature y firmante |
+| Archivos | Firma Authenticode y SHA-256, MD5 o ambos; resultados correspondientes al archivo leído en disco |
+| Active Directory | LDAPS o LDAP firmado/cifrado sin RSAT; proveedor RSAT disponible como alternativa |
+| WinRM | Inventario de procesos de un host autorizado, directamente o seleccionado desde el inventario de AD |
+| VirusTotal | Consulta de informes por SHA-256 y enriquecimiento local voluntario; sin subidas de archivos |
+| Informes | JSON, eventos JSONL y árbol TXT; la salida depende del modo utilizado |
+| Pendientes | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos |
 
-La integración no convierte WinAudit en un antivirus: agrega estadísticas de un proveedor, su fecha de análisis y un enlace al informe. Una firma válida o cero detecciones no garantizan seguridad.
-
-### Archivo publicado y SHA-256
-
-Descargá [WinAudit-Standalone.ps1](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/WinAudit-Standalone.ps1) y [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/SHA256SUMS.txt) desde los Assets de esta versión.
-
-Snapshot de código y workflow: [`922574861111027da5e2d6d55cc4866979e93a4a`](https://github.com/DarkCristian/WinAudit/commit/922574861111027da5e2d6d55cc4866979e93a4a). Blob Git del standalone: `74e3279018772eed9cc09e561c6310aa3bde5f73`. Estos SHA-1 identifican objetos Git; el SHA-256 siguiente verifica los bytes del script.
-
-SHA-256 del script:
-
-```text
-ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875
-```
-
-```powershell
-$esperado = 'ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875'
-$obtenido = (Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256).Hash
-if ($obtenido -ine $esperado) { throw 'SHA-256 distinto del publicado.' }
-```
-
-Los hashes corresponden al asset de `v0.4.0-alpha`; `main` puede cambiar posteriormente. El workflow genera además un artefacto con el standalone probado y su checksum.
-
-## LDAP/LDAPS y WinRM en v0.4.0-alpha
-
-La opción **4** permite descubrir equipos de AD mediante **LDAPS** (predeterminado), **LDAP con firma y cifrado de sesión** o **RSAT**. Después del inventario podés seleccionar un equipo y consultar sus procesos mediante **WinRM**, con permisos independientes.
-
-LDAP/LDAPS no requiere RSAT. No se omiten certificados, no se siguen referrals y no se degrada automáticamente una conexión protegida. Los resultados se paginan y los límites alcanzados se indican explícitamente.
-
-```powershell
-.\WinAudit.ps1 -DirectoryServer dc01.ad.example.com -DirectoryProtocol LDAPS -DirectoryNameFilter 'PC-*'
-.\WinAudit.ps1 -ComputerName pc001.ad.example.com
-```
-
-Esta implementación está incluida en el asset **WinAudit-Standalone.ps1** y en el código fuente del tag **v0.4.0-alpha**. También está disponible en el [standalone actual de main](https://raw.githubusercontent.com/DarkCristian/WinAudit/main/dist/WinAudit-Standalone.ps1).
-
-[Pruebas aprobadas en PowerShell 5.1 y 7](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065), con respuestas LDAP/LDAPS/RSAT/WinRM simuladas. Queda pendiente la validación contra un dominio autorizado.
-
-| Identificador de este avance | Valor |
-| --- | --- |
-| Commit del standalone | [`922574861111027da5e2d6d55cc4866979e93a4a`](https://github.com/DarkCristian/WinAudit/commit/922574861111027da5e2d6d55cc4866979e93a4a) |
-| SHA-256 del standalone en ese commit | `ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875` |
-
-Ver [uso y autenticación de LDAP/LDAPS y WinRM](docs/USAGE.md#descubrimiento-de-ad-por-ldapldaps-y-consulta-winrm).
-
-## Funciones
-
-| Función | Estado |
-| --- | --- |
-| Consola ASCII interactiva con menús numéricos | Implementada |
-| Inventario local de procesos, PID, PID padre y líneas de comandos | Implementado |
-| Firma Authenticode y hashes SHA-256 / MD5 del ejecutable de un PID activo seleccionado | Implementados |
-| Consulta histórica por PID o nombre e intervalo horario | Implementación inicial |
-| Búsqueda exacta de ejecutables activos, con todos sus PID | Implementada |
-| Captura local hasta un horario futuro, con espera y guardado progresivo | Implementada en la sesión actual |
-| Informe TXT y en pantalla de árbol observado, con MD5 y firma por proceso | Implementado; limitado a evidencia disponible |
-| Inventario de procesos remotos mediante WinRM | Implementado |
-| Descubrimiento de equipos mediante LDAP/LDAPS o RSAT y selección WinRM | Incluido en v0.4.0-alpha; requiere validación operativa |
-| Exportación local de informes JSON | Implementada |
-| Reputación VirusTotal por SHA-256 | Opcional, desactivada por defecto |
-| Informes HTML, escaneo por lotes y clasificación avanzada de riesgos | Planificados |
+`-FullScan` exporta el inventario local completo de procesos: no realiza un análisis antivirus completo, ni un escaneo de red o de todos los archivos. Los eventos, la captura y la evidencia del árbol son locales; WinRM actualmente ofrece inventario remoto de procesos.
 
 ## Requisitos
 
-- Windows PowerShell 5.1 o PowerShell 7 en Windows, según las funciones disponibles.
-- Permisos elevados para acceder a determinados datos de procesos y registros protegidos.
-- WinRM configurado y acceso autorizado para el modo remoto.
-- RSAT ActiveDirectory solo para el proveedor RSAT. LDAP/LDAPS permite descubrir equipos sin RSAT.
-- Registros de Windows habilitados y con retención suficiente para el período investigado.
-
-## Dependencias de Active Directory — opcionales
-
-**WinAudit no requiere compilación:** se ejecuta directamente como scripts PowerShell.
-
-RSAT solo es necesario para el proveedor que consulta objetos con `Get-ADComputer`. El descubrimiento directo LDAP/LDAPS no requiere RSAT. Las auditorías locales y las consultas remotas directas mediante WinRM no requieren RSAT.
-
-Desde la carpeta del repositorio, comprobá si el módulo está disponible:
-
-```powershell
-Get-Module -ListAvailable ActiveDirectory
-.\Install-Prerequisites.ps1
-```
-
-Si falta, abrí **Windows PowerShell como administrador** y ejecutá:
-
-```powershell
-.\Install-Prerequisites.ps1 -Install
-```
-
-El instalador utiliza los mecanismos oficiales de Windows:
-
-| Sistema | Comando utilizado |
+| Uso | Requisitos |
 | --- | --- |
-| Windows 10/11 Pro, Enterprise o Education, en versiones compatibles | `Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0` |
-| Windows Server | `Install-WindowsFeature RSAT-AD-PowerShell` |
+| Local | Windows y Windows PowerShell 5.1 o PowerShell 7; permisos adecuados para cada fuente |
+| LDAP/LDAPS | Runtime de Windows con `System.DirectoryServices.Protocols`, DNS y acceso autorizado al directorio |
+| LDAPS | Conectividad al puerto elegido y certificado validado normalmente por Windows |
+| Proveedor RSAT | Módulo PowerShell `ActiveDirectory` instalado |
+| WinRM | Host con WinRM ya configurado, nombre DNS y credenciales/permisos remotos autorizados |
+| VirusTotal | Activación explícita y API key propia con licencia apropiada para el uso previsto |
 
-En equipos administrados, la instalación puede depender de Windows Update, de una fuente aprobada o de la autorización del administrador. RSAT puede no estar disponible en determinadas ediciones de Windows. El instalador no modifica la configuración del dominio ni habilita WinRM.
-
-Después de instalarlo, verificá:
-
-```powershell
-Import-Module ActiveDirectory
-Get-Command Get-ADComputer
-```
-
-Luego iniciá WinAudit y seleccioná la opción **[4]**, correspondiente al inventario de equipos de Active Directory.
-
-Ejemplos de entrada:
-
-| Campo | Ejemplo ficticio |
-| --- | --- |
-| Dominio | `ad.example.com` |
-| Controlador de dominio | `dc01.ad.example.com` |
-| Base de búsqueda opcional | `OU=Workstations,DC=ad,DC=example,DC=com` |
-
-Las credenciales deben tener permisos de lectura sobre el directorio. Esos permisos no garantizan acceso remoto a los equipos.
+WinAudit no necesita compilación. No habilita WinRM, no modifica el firewall ni cambia las políticas de auditoría. Ejecutarlo con elevación puede permitir acceso a registros protegidos, pero no concede permisos en AD ni en equipos remotos.
 
 ## Instalación y ejecución
 
-Podés iniciar WinAudit de tres maneras.
+### 1. Archivo independiente
 
-### Opción 1 — Clonar el repositorio con Git
+Descargá [WinAudit-Standalone.ps1](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/WinAudit-Standalone.ps1) desde los Assets de la release y ejecutalo:
 
-Permite revisar el código, conservar los módulos localmente y actualizar el proyecto.
+```powershell
+.\WinAudit-Standalone.ps1
+```
+
+Incluye los módulos propios en un archivo; no requiere Git. También podés [revisar el código actual](dist/WinAudit-Standalone.ps1). `main` puede avanzar después de la publicación: para reproducir esta versión, usá el asset o el tag `v0.4.0-alpha`.
+
+### 2. Repositorio con Git
 
 ```powershell
 git clone https://github.com/DarkCristian/WinAudit.git
@@ -157,95 +59,21 @@ cd WinAudit
 .\WinAudit.ps1
 ```
 
-Para actualizarlo desde la carpeta del repositorio:
+Para actualizar esa copia de `main`, ejecutá `git pull`. Para clonar la versión publicada:
 
 ```powershell
-git pull
+git clone --branch v0.4.0-alpha https://github.com/DarkCristian/WinAudit.git
 ```
 
-### Opción 2 — Bootstrapper mediante IRM
-
-Ejecutá el siguiente comando desde PowerShell en Windows, sin instalar Git:
+### 3. Bootstrapper mediante IRM
 
 ```powershell
 irm https://raw.githubusercontent.com/DarkCristian/WinAudit/main/install.ps1 | iex
 ```
 
-El bootstrapper descarga WinAudit y sus módulos en una carpeta temporal, ejecuta la consola y elimina los archivos del programa al terminar. Los informes se conservan por separado. No instala RSAT ni habilita WinRM.
+Descarga el script y sus módulos a una carpeta temporal, inicia el menú y elimina esos archivos al finalizar normalmente. Los informes se conservan por separado. No instala RSAT ni eleva privilegios. Un cierre abrupto puede impedir la limpieza.
 
-**Seguridad:** `irm | iex` ejecuta código descargado de Internet. La rama `main` puede cambiar; revisá el código y preferí una revisión fijada a un commit en entornos administrados.
-
-### Opción 3 — Descargar el archivo PowerShell independiente
-
-Para probar las nuevas funciones de búsqueda y captura, descargá **WinAudit-Standalone.ps1** desde los **Assets** de la [pre-release v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha) y ejecutalo:
-
-```powershell
-.\WinAudit-Standalone.ps1
-```
-
-Podés [revisar su código](dist/WinAudit-Standalone.ps1) antes de ejecutarlo. La versión `v0.4.0-alpha` incluye LDAP/LDAPS, selección WinRM, búsqueda por nombre, captura por horarios, árbol con MD5 y firma, y VirusTotal opcional.
-
-Incluye los módulos propios en un solo archivo y no requiere Git. RSAT solo es necesario si elegís ese proveedor; LDAP/LDAPS no lo requiere; WinRM sigue siendo necesario para el inventario remoto.
-
-**Versión publicada:** el asset `.ps1` y los archivos **Source code** de `v0.4.0-alpha` corresponden al mismo código del tag. Las notas incluyen el SHA-256 del archivo y las pruebas realizadas.
-
-### Ejemplos sin menú interactivo
-
-Desde una copia del repositorio:
-
-```powershell
-.\WinAudit.ps1 -FullScan
-.\WinAudit.ps1 -PIDToAudit 1234 -StartTime '2026-01-01 10:00' -EndTime '2026-01-01 11:00'
-.\WinAudit.ps1 -ComputerName pc001.ad.example.com
-```
-
-Si utilizás el archivo independiente, reemplazá `WinAudit.ps1` por `WinAudit-Standalone.ps1`.
-
-## Buscar procesos y consultar o capturar eventos
-
-Búsqueda exacta de todos los PID activos de un ejecutable:
-
-```powershell
-.\WinAudit.ps1 -FindProcess 'example.exe'
-```
-
-Consulta histórica por nombre (también admite `-PIDToAudit 1234`):
-
-```powershell
-.\WinAudit.ps1 -FindProcess 'example.exe' -Start '01-01-2026 10:00:00' -End '01-01-2026 11:00:00'
-```
-
-Captura local desde ahora hasta dentro de diez minutos:
-
-```powershell
-.\WinAudit.ps1 -FindProcess 'example.exe' -Monitor -End ((Get-Date).AddMinutes(10))
-```
-
-Para un inicio futuro, agregá `-Start` con la fecha y hora deseadas. Se admiten `dd-MM-yyyy HH:mm:ss`, `yyyy-MM-dd HH:mm:ss` y objetos `[datetime]`. `-Start` y `-End` son alias de `-StartTime` y `-EndTime`. Se utiliza la hora local del equipo donde corre WinAudit.
-
-**La terminal debe permanecer abierta.** No crea tareas programadas ni servicios. Consulta los registros existentes, guarda eventos progresivamente en JSONL y genera un resumen JSON, evidencia de procesos y un informe TXT con el árbol observado. Los vínculos de eventos se presentan por separado del parentesco. No habilita auditorías de Windows automáticamente. La búsqueda por nombre requiere que el evento registre un campo de ejecutable compatible; no garantiza encontrar toda la actividad de ese programa.
-
-Consultá la [guía de uso](docs/USAGE.md) para conocer los campos, límites, cancelación y disponibilidad de fuentes.
-
-## Verificar un archivo con MD5 o SHA-256
-
-```powershell
-.\WinAudit.ps1 -FilePath 'C:\Example\example.exe' -HashAlgorithm Both
-```
-
-Usá `MD5`, `SHA256` o `Both`; también están disponibles en la opción **8** del menú. El resultado incluye la firma digital y se guarda en JSON. Los hashes describen el archivo actual en disco. MD5 sirve para comparar identificadores; no demuestra integridad frente a manipulación intencional.
-
-## Integración avanzada opcional: VirusTotal
-
-**No necesitás configurar nada para usar WinAudit.** Al final del menú, la opción **9** permite que SysAdmin o SegInfo cargue su propia API key para la sesión, consulte un SHA-256 manualmente y, si quiere, active el enriquecimiento de auditorías locales. Cargar la clave no activa consultas automáticas.
-
-También se admite `VIRUSTOTAL_API_KEY` junto con `-VirusTotal` explícito. Tener la variable definida sin activar la opción no inicia consultas. La clave no se incluye en código, informes ni workflows.
-
-Solo se envían hashes SHA-256 para recuperar informes existentes. No se suben ejecutables ni logs ni se solicitan reanálisis. Se usan caché y límites locales, y se controlan errores de autenticación, cuota y conexión. Durante el monitoreo, las consultas se hacen al finalizar la captura local, usando el SHA-256 observado.
-
-**Uso empresarial:** el operador debe usar una cuenta/licencia compatible con los [términos del proveedor](https://docs.virustotal.com/reference/public-vs-premium-api). La API pública tiene restricciones comerciales y para flujos empresariales que no aportan archivos nuevos. La integración no supone que una clave gratuita sea apropiada para una organización.
-
-Ver [configuración y ejemplos](docs/USAGE.md#virustotal-opcional--menu-avanzado-9) y [modelo de seguridad](docs/SECURITY.md).
+`irm | iex` ejecuta código remoto de una rama que puede cambiar. Revisá el código antes de ejecutarlo; el bootstrapper no verifica un checksum fijado a esta release. No se cambia automáticamente la política de ejecución de PowerShell.
 
 ## Menú
 
@@ -254,29 +82,116 @@ Ver [configuración y ejemplos](docs/USAGE.md#virustotal-opcional--menu-avanzado
 | 1 | Mostrar procesos locales |
 | 2 | Consultar eventos históricos por PID o nombre, con inicio y fin |
 | 3 | Inventario remoto de procesos mediante WinRM |
-| 4 | Descubrir equipos por LDAP/LDAPS o RSAT y seleccionar WinRM |
-| 5 | Inventario local completo e informe JSON |
-| 6 | Buscar proceso activo por nombre exacto |
-| 7 | Esperar y capturar eventos hasta un horario futuro |
-| 8 | Verificar archivo: firma, SHA-256, MD5 o ambos |
+| 4 | Descubrir equipos mediante LDAP/LDAPS o RSAT y seleccionar un host para WinRM |
+| 5 | Inventario local completo de procesos e informe JSON |
+| 6 | Buscar un ejecutable activo por nombre exacto |
+| 7 | Capturar eventos hasta un horario futuro |
+| 8 | Verificar firma y hashes de un archivo |
 | 9 | Avanzado: configurar o consultar VirusTotal de forma opcional |
 | 0 | Salir |
 
-## Alcance y límites de la evidencia
+## Ejemplos rápidos
 
-Un registro de Windows puede identificar al proceso que **emitió** el evento, en lugar del proceso investigado. Además, los PID se reutilizan y no identifican de forma única un proceso histórico. WinAudit indica el campo coincidente y no deduce automáticamente que una actividad sea maliciosa.
+Los ejemplos usan la copia del repositorio. Sustituí `WinAudit.ps1` por `WinAudit-Standalone.ps1` si usás el archivo independiente.
 
-La ausencia de firma digital no demuestra que un ejecutable sea malicioso. La investigación depende de los registros existentes: no se pueden reconstruir actividades que Windows no registró.
+```powershell
+# Todos los PID activos de un ejecutable
+.\WinAudit.ps1 -FindProcess 'example.exe'
 
-WinAudit consulta y exporta información; no aplica remediaciones ni modifica deliberadamente procesos, servicios, políticas de auditoría o la configuración de WinRM. Su propia ejecución puede generar registros del sistema.
+# Eventos históricos por PID o por nombre
+.\WinAudit.ps1 -PIDToAudit 1234 -Start '01-01-2026 10:00:00' -End '01-01-2026 11:00:00'
+.\WinAudit.ps1 -FindProcess 'example.exe' -Start '2026-01-01 10:00:00' -End '2026-01-01 11:00:00'
 
-Los informes pueden contener datos sensibles de los equipos auditados. Por defecto se guardan localmente en `%USERPROFILE%\WinAudit-Reports`. No publiques informes reales ni los incluyas en commits.
+# Captura local: mantener abierta la terminal
+.\WinAudit.ps1 -FindProcess 'example.exe' -Monitor -End ((Get-Date).AddMinutes(10))
 
-## Documentación
+# Firma y ambos hashes de un archivo
+.\WinAudit.ps1 -FilePath 'C:\Example\example.exe' -HashAlgorithm Both
 
-- [Guía de uso](docs/USAGE.md)
-- [Modelo de seguridad y limitaciones](docs/SECURITY.md)
+# Descubrir equipos sin RSAT con la identidad actual
+.\WinAudit.ps1 -DirectoryServer dc01.ad.example.com -DirectoryProtocol LDAPS -DirectoryNameFilter 'PC-*' -EnabledOnly
 
-## Licencia
+# Inventario WinRM con credenciales remotas independientes
+$credRemota = Get-Credential
+.\WinAudit.ps1 -ComputerName pc001.ad.example.com -RemoteCredential $credRemota
+```
 
-MIT. Consultá [LICENSE](LICENSE).
+Las fechas usan la hora local del equipo donde corre WinAudit. Se aceptan `dd-MM-yyyy HH:mm:ss`, `yyyy-MM-dd HH:mm:ss` y objetos `[datetime]`; los segundos son opcionales en los formatos de texto. El fin debe ser posterior al inicio. Un fin futuro requiere captura con `-Monitor`.
+
+## LDAP/LDAPS, RSAT y WinRM
+
+LDAP/LDAPS y RSAT consultan el directorio. WinRM consulta el host. Un objeto registrado o habilitado en AD no demuestra que el equipo esté encendido o sea accesible.
+
+- **LDAPS**, predeterminado: puerto 636, TLS y validación normal de certificado.
+- **LDAP**: puerto 389 con firma y sellado de sesión SASL; no es simple bind sin protección ni StartTLS.
+- **Autenticación**: Kerberos por defecto; Negotiate solo cuando se solicita explícitamente.
+- **RSAT**: alternativa mediante `Get-ADComputer`; solo este proveedor necesita `ActiveDirectory`.
+- **WinRM**: Kerberos por defecto; HTTPS y puerto alternativo cuando se solicitan. No modifica TrustedHosts ni omite certificados.
+
+La opción 4 permite indicar OU, patrón y credenciales, consultar el inventario y elegir una de las primeras 100 filas mostradas para WinRM. Las credenciales de AD no se reutilizan automáticamente para el host. La consulta usa paginación y marca los resultados limitados mediante `QueryTruncated`.
+
+### RSAT opcional
+
+Solo si elegís el proveedor RSAT, desde una copia del repositorio:
+
+```powershell
+Get-Module -ListAvailable ActiveDirectory
+.\Install-Prerequisites.ps1
+```
+
+Si falta y decidís instalarlo, abrí Windows PowerShell elevado:
+
+```powershell
+.\Install-Prerequisites.ps1 -Install
+```
+
+El instalador usa los mecanismos de Microsoft disponibles para Windows cliente o Server. Su compatibilidad depende de la edición, políticas y origen de componentes. Este paso modifica Windows de forma explícita; no es necesario para LDAP/LDAPS ni para WinRM.
+
+## VirusTotal opcional
+
+La opción 9 permite cargar una clave propia para la sesión y consultar manualmente un SHA-256. Cargar la clave no activa consultas automáticas: el enriquecimiento se habilita por separado. Por comando, requiere `-VirusTotal` explícito y `VIRUSTOTAL_API_KEY` ya configurada; la variable por sí sola no activa consultas.
+
+Solo recupera informes existentes por hash. No sube archivos ni logs y no solicita reanálisis. El proveedor recibe el hash, la clave y los datos normales de conexión. Hay caché y límites locales; los errores no se convierten en una clasificación de seguridad.
+
+Usá una cuenta/licencia compatible con los [términos del proveedor](https://docs.virustotal.com/reference/public-vs-premium-api), que restringen el uso de la API pública en determinados contextos comerciales y empresariales. Ver [configuración y resultados](docs/USAGE.md#virustotal-opcional) y [privacidad de la clave](docs/SECURITY.md#virustotal-y-claves).
+
+## Informes y límites de la evidencia
+
+Por defecto se guardan en `%USERPROFILE%\WinAudit-Reports`. Podés cambiar la carpeta con `-ReportDirectory`. Los informes reales pueden incluir usuarios, rutas y argumentos: mantenelos fuera del repositorio y con acceso restringido.
+
+En el árbol se muestra este formato ilustrativo:
+
+```text
+example.exe PID 1010 | MD5: <32 caracteres hexadecimales> | Signature: Valid | Firmante: CN=Example Publisher
+```
+
+Una firma válida no garantiza seguridad; `NotSigned` no significa malicioso y `NoDisponible` indica evidencia que no se pudo leer. Los PID se reutilizan, las instantáneas pueden perder procesos breves y los registros pueden faltar o llegar tarde. No hay análisis de memoria ni detección concluyente de malware.
+
+## Versión, SHA y validación
+
+| Identificador | Valor |
+| --- | --- |
+| Release | [v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha) |
+| Commit del tag (SHA-1 de Git) | `c2375ea6f57602dc0e74ab6518d16eda300de673` |
+| Blob Git del standalone | `74e3279018772eed9cc09e561c6310aa3bde5f73` |
+| SHA-256 de `WinAudit-Standalone.ps1` | `ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875` |
+| Archivo de sumas | [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/SHA256SUMS.txt) |
+| SHA-256 del propio archivo de sumas | `82806d09aacb94740903a2553b9922ff912b0b507caf274652f690a52b6a9d6e` |
+
+Los SHA-1 identifican objetos Git; el SHA-256 verifica los bytes del asset. Podés comprobarlo sin ejecutarlo:
+
+```powershell
+$esperado = 'ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875'
+$obtenido = (Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256).Hash
+if ($obtenido -ine $esperado) { throw 'SHA-256 distinto del publicado.' }
+```
+
+[Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065): sintaxis, ensamblado, fechas, eventos sintéticos, captura, árbol, hashes, VirusTotal simulado y pruebas de LDAP/LDAPS/RSAT/WinRM simulados, en PowerShell 5.1 y 7. El artefacto incluye el standalone probado y su checksum. Esto no sustituye la validación contra sistemas reales autorizados.
+
+La documentación de `main` puede recibir correcciones después del tag sin cambiar el asset publicado.
+
+## Documentación y licencia
+
+- [Guía de uso](docs/USAGE.md): modos, parámetros, ejemplos e informes.
+- [Modelo de seguridad y limitaciones](docs/SECURITY.md): confianza, permisos, credenciales, datos y fuentes incompletas.
+- [Licencia MIT](LICENSE).

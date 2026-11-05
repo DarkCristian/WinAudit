@@ -9,6 +9,8 @@
 param(
     [Alias('PID')][ValidateRange(0,2147483647)][int]$PIDToAudit = 0,
     [Alias('ProcessName')][ValidatePattern('^[^\\/:*?"<>|]+\.exe$')][string]$FindProcess,
+    [string]$FilePath,
+    [ValidateSet('SHA256','MD5','Both')][string]$HashAlgorithm = 'SHA256',
     [switch]$Monitor,
     [switch]$FullScan,
     [string]$ComputerName,
@@ -82,7 +84,7 @@ function Invoke-EventInvestigation {
     Show-Result $processes
     $evidence = @($processes | ForEach-Object {
         if ($_.ExecutablePath) {
-            try { Get-WAFileEvidence -Path $_.ExecutablePath } catch { Write-Warning $_.Exception.Message }
+            try { Get-WAFileEvidence -Path $_.ExecutablePath -HashAlgorithm $HashAlgorithm } catch { Write-Warning $_.Exception.Message }
         }
     })
     $status = New-Object 'System.Collections.Generic.List[object]'
@@ -124,10 +126,25 @@ function Invoke-DirectoryInventory {
     Show-Result ($items | Select-Object -First 100 Name,DNSHostName,OperatingSystem,Enabled)
     Save-Report $items 'ad-inventory'
 }
+function Invoke-FileEvidenceMenu {
+    $path = (Read-Host 'Ruta del archivo a verificar').Trim('"')
+    $option = Read-Host 'Hash: [1] SHA-256 [2] MD5 [3] Ambos'
+    $algorithm = switch ($option) { '1' {'SHA256'} '2' {'MD5'} '3' {'Both'} default {throw 'Opcion invalida.'} }
+    $evidence = Get-WAFileEvidence -Path $path -HashAlgorithm $algorithm
+    $evidence | Format-List | Out-Host
+    Save-Report $evidence 'file-evidence'
+}
 $hasWindow = $PSBoundParameters.ContainsKey('StartTime') -or $PSBoundParameters.ContainsKey('EndTime')
 $from = if ($null -eq $StartTime) { if ($Monitor) {Get-Date} else {(Get-Date).AddHours(-24)} } else { ConvertTo-WADateTime $StartTime }
 $until = if ($null -eq $EndTime) { Get-Date } else { ConvertTo-WADateTime $EndTime }
 if ($until -le $from) { throw 'El fin debe ser posterior al inicio.' }
+if ($FilePath) {
+    if ($FindProcess -or $PIDToAudit -gt 0 -or $Monitor -or $ComputerName -or $FullScan -or $hasWindow) { throw '-FilePath solo admite -HashAlgorithm y -ReportDirectory.' }
+    $evidence = Get-WAFileEvidence -Path $FilePath -HashAlgorithm $HashAlgorithm
+    $evidence | Format-List | Out-Host
+    Save-Report $evidence 'file-evidence'
+    return
+}
 if ($PIDToAudit -gt 0 -and $FindProcess) { throw 'Usa -PIDToAudit o -FindProcess, no ambos.' }
 if ($ComputerName -and ($Monitor -or $FindProcess -or $PIDToAudit -gt 0 -or $hasWindow -or $FullScan)) { throw '-ComputerName solo admite inventario remoto en esta version.' }
 if ($FullScan -and ($Monitor -or $FindProcess -or $PIDToAudit -gt 0 -or $hasWindow)) { throw '-FullScan solo admite inventario local en esta version.' }
@@ -156,6 +173,7 @@ while ($true) {
     Write-Host '  [5] Inventario local completo + informe JSON'
     Write-Host '  [6] Buscar proceso activo por nombre (example.exe)'
     Write-Host '  [7] Capturar eventos hasta un horario futuro'
+    Write-Host '  [8] Verificar archivo: firma, SHA-256, MD5 o ambos'
     Write-Host '  [0] Salir'
     $choice = Read-Host 'Selecciona una opcion'
     try {
@@ -167,6 +185,7 @@ while ($true) {
             '5' { Save-Report ([pscustomobject]@{CurrentProcesses=@(Get-WAProcesses)}) 'local-processes' }
             '6' { $name = Read-ExecutableName; Save-Report ([pscustomobject]@{Query=$name; CurrentProcesses=@(Invoke-LocalProcesses -Name $name)}) 'process-search' }
             '7' { Invoke-InteractiveEvents -Capture }
+            '8' { Invoke-FileEvidenceMenu }
             '0' { return }
             default { Write-Host 'Opcion invalida.' -ForegroundColor Yellow }
         }

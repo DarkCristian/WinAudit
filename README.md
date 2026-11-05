@@ -14,16 +14,16 @@
 
 > **Versión Alpha para pruebas.** El proyecto incluye [pruebas automatizadas](https://github.com/DarkCristian/WinAudit/actions/workflows/validate-standalone.yml) para Windows PowerShell 5.1 y PowerShell 7, con eventos sintéticos, validación de fechas y comprobación del archivo independiente. Las auditorías reales de procesos, registros, WinRM y AD todavía requieren validación en un entorno Windows autorizado. No debe considerarse una herramienta completa de adquisición forense.
 
-## Versión y avance — v0.3.0-alpha
+## Versión y avance — v0.4.0-alpha
 
-**[WinAudit v0.3.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.3.0-alpha)** incorpora la integración opcional de reputación VirusTotal en el menú avanzado 9. Conserva consultas históricas, captura por horarios, árbol en TXT/pantalla con MD5 y firma, e inventarios local, remoto y de Active Directory.
+**[WinAudit v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha)** incorpora descubrimiento de equipos por LDAP/LDAPS sin RSAT y selección de un host para inventario WinRM. Incluye también VirusTotal opcional en el menú avanzado 9. Conserva consultas históricas, captura por horarios, árbol en TXT/pantalla con MD5 y firma, e inventarios local, remoto y de Active Directory.
 
 | Área | Avance |
 | --- | --- |
 | Auditoría local | Procesos, firmas, hashes SHA-256/MD5, intervalos y captura local implementados |
 | Árbol e informes | PID, MD5, Signature y firmante en TXT y pantalla; JSON/JSONL con evidencia |
 | VirusTotal | Consulta manual por SHA-256 y enriquecimiento local opcional; apagado por defecto |
-| Validación | [Workflow de Windows PowerShell 5.1 y PowerShell 7](https://github.com/DarkCristian/WinAudit/actions/runs/42111064134); API simulada, sin claves reales ni solicitudes externas |
+| Validación | [Workflow de Windows PowerShell 5.1 y PowerShell 7](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065); API simulada, sin claves reales ni solicitudes externas |
 | Validación operativa | Pendiente contra registros reales, permisos, WinRM, AD y una cuenta autorizada de VirusTotal |
 | Próximas funciones | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos |
 
@@ -31,25 +31,25 @@ La integración no convierte WinAudit en un antivirus: agrega estadísticas de u
 
 ### Archivo publicado y SHA-256
 
-Descargá [WinAudit-Standalone.ps1](https://github.com/DarkCristian/WinAudit/releases/download/v0.3.0-alpha/WinAudit-Standalone.ps1) y [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.3.0-alpha/SHA256SUMS.txt) desde los Assets de esta versión.
+Descargá [WinAudit-Standalone.ps1](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/WinAudit-Standalone.ps1) y [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/SHA256SUMS.txt) desde los Assets de esta versión.
 
-Snapshot de código y workflow: [`12d28f58a8c14bc9b724c546f8a38eec3ffb14a2`](https://github.com/DarkCristian/WinAudit/commit/12d28f58a8c14bc9b724c546f8a38eec3ffb14a2). Blob Git del standalone: `53721b6df6d99e28485280d08e351b5c397b1bb5`. Estos SHA-1 identifican objetos Git; el SHA-256 siguiente verifica los bytes del script.
+Snapshot de código y workflow: [`922574861111027da5e2d6d55cc4866979e93a4a`](https://github.com/DarkCristian/WinAudit/commit/922574861111027da5e2d6d55cc4866979e93a4a). Blob Git del standalone: `74e3279018772eed9cc09e561c6310aa3bde5f73`. Estos SHA-1 identifican objetos Git; el SHA-256 siguiente verifica los bytes del script.
 
 SHA-256 del script:
 
 ```text
-423f559e1440d7f4d118732745948caa375fc177c7a0580ae56a0144d2786589
+ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875
 ```
 
 ```powershell
-$esperado = '423f559e1440d7f4d118732745948caa375fc177c7a0580ae56a0144d2786589'
+$esperado = 'ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875'
 $obtenido = (Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256).Hash
 if ($obtenido -ine $esperado) { throw 'SHA-256 distinto del publicado.' }
 ```
 
-Los hashes corresponden al asset de `v0.3.0-alpha`; `main` puede cambiar posteriormente. El workflow genera además un artefacto con el standalone probado y su checksum.
+Los hashes corresponden al asset de `v0.4.0-alpha`; `main` puede cambiar posteriormente. El workflow genera además un artefacto con el standalone probado y su checksum.
 
-## Avance en main: LDAP/LDAPS y WinRM
+## LDAP/LDAPS y WinRM en v0.4.0-alpha
 
 La opción **4** permite descubrir equipos de AD mediante **LDAPS** (predeterminado), **LDAP con firma y cifrado de sesión** o **RSAT**. Después del inventario podés seleccionar un equipo y consultar sus procesos mediante **WinRM**, con permisos independientes.
 
@@ -60,7 +60,7 @@ LDAP/LDAPS no requiere RSAT. No se omiten certificados, no se siguen referrals y
 .\WinAudit.ps1 -ComputerName pc001.ad.example.com
 ```
 
-Este avance está en el [standalone actual de main](https://raw.githubusercontent.com/DarkCristian/WinAudit/main/dist/WinAudit-Standalone.ps1). El asset de **v0.3.0-alpha** conserva la versión anterior; su SHA-256 publicado sigue identificando ese archivo.
+Esta implementación está incluida en el asset **WinAudit-Standalone.ps1** y en el código fuente del tag **v0.4.0-alpha**. También está disponible en el [standalone actual de main](https://raw.githubusercontent.com/DarkCristian/WinAudit/main/dist/WinAudit-Standalone.ps1).
 
 [Pruebas aprobadas en PowerShell 5.1 y 7](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065), con respuestas LDAP/LDAPS/RSAT/WinRM simuladas. Queda pendiente la validación contra un dominio autorizado.
 
@@ -83,7 +83,7 @@ Ver [uso y autenticación de LDAP/LDAPS y WinRM](docs/USAGE.md#descubrimiento-de
 | Captura local hasta un horario futuro, con espera y guardado progresivo | Implementada en la sesión actual |
 | Informe TXT y en pantalla de árbol observado, con MD5 y firma por proceso | Implementado; limitado a evidencia disponible |
 | Inventario de procesos remotos mediante WinRM | Implementado |
-| Descubrimiento de equipos mediante LDAP/LDAPS o RSAT y seleccion WinRM | Implementado en main; requiere validación operativa |
+| Descubrimiento de equipos mediante LDAP/LDAPS o RSAT y selección WinRM | Incluido en v0.4.0-alpha; requiere validación operativa |
 | Exportación local de informes JSON | Implementada |
 | Reputación VirusTotal por SHA-256 | Opcional, desactivada por defecto |
 | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos | Planificados |
@@ -177,17 +177,17 @@ El bootstrapper descarga WinAudit y sus módulos en una carpeta temporal, ejecut
 
 ### Opción 3 — Descargar el archivo PowerShell independiente
 
-Para probar las nuevas funciones de búsqueda y captura, descargá **WinAudit-Standalone.ps1** desde los **Assets** de la [pre-release v0.3.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.3.0-alpha) y ejecutalo:
+Para probar las nuevas funciones de búsqueda y captura, descargá **WinAudit-Standalone.ps1** desde los **Assets** de la [pre-release v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha) y ejecutalo:
 
 ```powershell
 .\WinAudit-Standalone.ps1
 ```
 
-Podés [revisar su código](dist/WinAudit-Standalone.ps1) antes de ejecutarlo. La versión `v0.3.0-alpha` incluye búsqueda por nombre, captura por horarios, árbol con MD5 y firma, y VirusTotal opcional.
+Podés [revisar su código](dist/WinAudit-Standalone.ps1) antes de ejecutarlo. La versión `v0.4.0-alpha` incluye LDAP/LDAPS, selección WinRM, búsqueda por nombre, captura por horarios, árbol con MD5 y firma, y VirusTotal opcional.
 
-Incluye los módulos propios en un solo archivo y no requiere Git. RSAT sigue siendo opcional para descubrir equipos de Active Directory; WinRM sigue siendo necesario para el inventario remoto.
+Incluye los módulos propios en un solo archivo y no requiere Git. RSAT solo es necesario si elegís ese proveedor; LDAP/LDAPS no lo requiere; WinRM sigue siendo necesario para el inventario remoto.
 
-**Versión publicada:** el asset `.ps1` y los archivos **Source code** de `v0.3.0-alpha` corresponden al mismo código del tag. Las notas incluyen el SHA-256 del archivo y las pruebas realizadas.
+**Versión publicada:** el asset `.ps1` y los archivos **Source code** de `v0.4.0-alpha` corresponden al mismo código del tag. Las notas incluyen el SHA-256 del archivo y las pruebas realizadas.
 
 ### Ejemplos sin menú interactivo
 

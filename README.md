@@ -8,6 +8,8 @@ WinAudit permite buscar procesos por PID o nombre, verificar firmas Authenticode
 
 [Descargar v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha) · [Guía de uso](docs/USAGE.md) · [Modelo de seguridad y limitaciones](docs/SECURITY.md) · [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065)
 
+> **Correcciones de seguridad en `main` (05/11/2026):** usá el código actual o el nuevo bootstrapper. El asset y el tag `v0.4.0-alpha` anteriores **no incluyen estos cambios**. [Revisión y alcance](docs/SECURITY_REVIEW.md).
+
 ## Funciones y alcance
 
 | Función | Implementación actual |
@@ -30,7 +32,7 @@ WinAudit permite buscar procesos por PID o nombre, verificar firmas Authenticode
 
 | Uso | Requisitos |
 | --- | --- |
-| Local | Windows y Windows PowerShell 5.1 o PowerShell 7; permisos adecuados para cada fuente |
+| Local | Windows actualizado y Windows PowerShell 5.1, o PowerShell estable 7.4.21+, 7.5.12+ o 7.6.7+ en su rama; permisos adecuados para cada fuente |
 | LDAP/LDAPS | Runtime de Windows con `System.DirectoryServices.Protocols`, DNS y acceso autorizado al directorio |
 | LDAPS | Conectividad al puerto elegido y certificado validado normalmente por Windows |
 | Proveedor RSAT | Módulo PowerShell `ActiveDirectory` instalado |
@@ -43,7 +45,7 @@ WinAudit no necesita compilación. No habilita WinRM, no modifica el firewall ni
 
 ### 1. Archivo independiente
 
-Descargá [WinAudit-Standalone.ps1](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/WinAudit-Standalone.ps1) desde los Assets de la release y ejecutalo:
+Para las correcciones de seguridad, descargá el [standalone revisado de main](dist/WinAudit-Standalone.ps1) y comprobá el SHA-256 indicado más abajo antes de ejecutarlo:
 
 ```powershell
 .\WinAudit-Standalone.ps1
@@ -71,9 +73,9 @@ git clone --branch v0.4.0-alpha https://github.com/DarkCristian/WinAudit.git
 irm https://raw.githubusercontent.com/DarkCristian/WinAudit/main/install.ps1 | iex
 ```
 
-Descarga el script y sus módulos a una carpeta temporal, inicia el menú y elimina esos archivos al finalizar normalmente. Los informes se conservan por separado. No instala RSAT ni eleva privilegios. Un cierre abrupto puede impedir la limpieza.
+Descarga un único standalone desde un commit inmutable, comprueba su SHA-256 fijado en el launcher y recién entonces inicia el menú. Rechaza una descarga alterada. Usa una carpeta temporal local y mantiene el archivo bloqueado contra escritura durante la ejecución; limpia al finalizar normalmente. No instala RSAT ni eleva privilegios.
 
-`irm | iex` ejecuta código remoto de una rama que puede cambiar. Revisá el código antes de ejecutarlo; el bootstrapper no verifica un checksum fijado a esta release. No se cambia automáticamente la política de ejecución de PowerShell.
+El primer `irm | iex` todavía confía en el launcher recibido de `main`: su hash interno no autentica al propio launcher. Para mayor control, descargá y revisá `install.ps1` antes de ejecutarlo o fijá una revisión aprobada. No se cambia la política de ejecución ni se omiten certificados.
 
 ## Menú
 
@@ -167,7 +169,13 @@ example.exe PID 1010 | MD5: <32 caracteres hexadecimales> | Signature: Valid | F
 
 Una firma válida no garantiza seguridad; `NotSigned` no significa malicioso y `NoDisponible` indica evidencia que no se pudo leer. Los PID se reutilizan, las instantáneas pueden perder procesos breves y los registros pueden faltar o llegar tarde. No hay análisis de memoria ni detección concluyente de malware.
 
-## Versión, SHA y validación
+## Revisión de seguridad de main
+
+El bootstrapper fija el standalone del commit `6e883047e3b11ba19e68bc19fc2f977f745842ec`, SHA-256 `369a7d9518a240a4a81e76a2dd7acb05146be228eb4d8ad27c2c0e0100229f14`. Incluye controles de rutas locales, rechazo de junctions/reparse points, XML sin DTD, saneamiento de pantalla y límites de consulta. Los JSON conservan la evidencia cruda.
+
+Las lecturas de archivo y los informes rechazan UNC, unidades de red, ADS y reparse points. Eventos: `-MaxEventsPerLog` predeterminado 10000, máximo 100000 por registro/consulta; un recorte se marca `Limitado`. Ver [revisión de seguridad](docs/SECURITY_REVIEW.md).
+
+## Versión publicada anterior, SHA y validación
 
 | Identificador | Valor |
 | --- | --- |
@@ -188,7 +196,7 @@ if ($obtenido -ine $esperado) { throw 'SHA-256 distinto del publicado.' }
 
 [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065): sintaxis, ensamblado, fechas, eventos sintéticos, captura, árbol, hashes, VirusTotal simulado y pruebas de LDAP/LDAPS/RSAT/WinRM simulados, en PowerShell 5.1 y 7. El artefacto incluye el standalone probado y su checksum. Esto no sustituye la validación contra sistemas reales autorizados.
 
-La documentación de `main` puede recibir correcciones después del tag sin cambiar el asset publicado.
+El asset anterior se conserva como referencia histórica; no contiene las correcciones de seguridad de `main`. No se publicó una nueva release en esta revisión.
 
 ## Documentación y licencia
 

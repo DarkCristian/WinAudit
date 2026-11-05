@@ -97,6 +97,7 @@ function Start-WAEventCapture {
         [Parameter(Mandatory)][datetime]$EndTime,
         [Parameter(Mandatory)][string]$Directory,
         [ValidateRange(1,300)][int]$PollSeconds = 5,
+        [hashtable]$VirusTotalContext,
         [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational')
     )
     if (($TargetPid -eq 0 -and -not $ProcessName) -or ($TargetPid -gt 0 -and $ProcessName)) { throw 'Indica un solo selector: PID o nombre.' }
@@ -114,7 +115,7 @@ function Start-WAEventCapture {
     $seen = New-Object 'System.Collections.Generic.HashSet[string]'
     $statuses = New-Object 'System.Collections.Generic.List[object]'
     $metadata = [pscustomobject]@{
-        Tool='WinAudit'; Mode='EventCapture'; Host=$env:COMPUTERNAME
+        Tool='WinAudit'; Mode='EventCapture'; Host=$env:COMPUTERNAME; VirusTotalEnabled=($null -ne $VirusTotalContext)
         TimeZone=[TimeZoneInfo]::Local.Id; RequestedStart=$StartTime.ToString('o'); RequestedEnd=$EndTime.ToString('o')
         TargetPid=$TargetPid; ProcessName=$ProcessName; State='Esperando'; MatchedCount=0
         StartedAt=(Get-Date).ToString('o'); UpdatedAt=$null; LastQueryEnd=$null; FinishedAt=$null
@@ -171,6 +172,10 @@ function Start-WAEventCapture {
         $metadata.Sources = @($statuses.ToArray())
                 $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
         $metadata.State = if ($metadata.SourceIssues.Count -gt 0 -or $metadata.ProcessIssues.Count -gt 0) { 'FinalizadaConLimitaciones' } else { 'Finalizada' }
+        if ($null -ne $VirusTotalContext) {
+            Write-Host 'Captura local terminada. Consultando reputacion opcional por hashes unicos; puede demorar por limites de la API.'
+            Add-WAVirusTotalToProcesses -Nodes $processNodes -Context $VirusTotalContext
+        }
     } finally {
         if ($metadata.State -in @('Esperando','Capturando')) { $metadata.State = 'Interrumpida' }
         $metadata.ObservedProcessCount = $processNodes.Count

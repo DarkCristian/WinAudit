@@ -30,6 +30,7 @@ jobs:
         run: |
           Write-Host $PSVersionTable.PSVersion
           .\tests\Security.Tests.ps1
+          .\tests\Bootstrap.Tests.ps1
           .\tests\Features.Tests.ps1
           .\tests\Reputation.Tests.ps1
           .\tests\Directory.Tests.ps1
@@ -38,6 +39,7 @@ jobs:
         run: |
           Write-Host $PSVersionTable.PSVersion
           .\tests\Security.Tests.ps1
+          .\tests\Bootstrap.Tests.ps1
           .\tests\Features.Tests.ps1
           .\tests\Reputation.Tests.ps1
           .\tests\Directory.Tests.ps1

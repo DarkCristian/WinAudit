@@ -24,7 +24,7 @@ foreach ($path in @('\\files.example.com\share\example.exe','//files.example.com
 $securityModule=Get-Module Security
 & $securityModule {function script:Get-WALocalDriveType {param($Root) [IO.DriveType]::Network}}
 Assert-Rejected {Resolve-WALocalEvidencePath -Path 'C:\Example\example.exe' -AllowMissing} 'Debe rechazar unidad mapeada de red.'
-& $securityModule {Remove-Item Function:\Get-WALocalDriveType}
+Import-Module (Join-Path $root 'Modules/Security.psm1') -Force
 $temp=Join-Path ([IO.Path]::GetTempPath()) ('WA-security-'+[guid]::NewGuid().ToString('N'))
 $junction=$null
 try {

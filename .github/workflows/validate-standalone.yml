@@ -27,11 +27,13 @@ jobs:
         run: |
           .\tests\Features.Tests.ps1
           .\tests\Reputation.Tests.ps1
+          .\tests\Directory.Tests.ps1
       - name: PowerShell 7
         shell: pwsh
         run: |
           .\tests\Features.Tests.ps1
           .\tests\Reputation.Tests.ps1
+          .\tests\Directory.Tests.ps1
       - name: Package standalone and checksums
         shell: pwsh
         run: |

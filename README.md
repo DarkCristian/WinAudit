@@ -7,74 +7,88 @@
    \ V  V / | | | | / ___ \ |_| | (_| | | |_
     \_/\_/  |_|_| |_/_/   \_\__,_|\__,_|_|\__|
 
-    WINDOWS SECURITY & FORENSIC AUDITOR
+    AUDITOR DE SEGURIDAD Y ANALISIS FORENSE DE WINDOWS
 ```
 
-**WinAudit** is an open-source, native PowerShell utility for Windows process inventory, digital-signature verification, PID-oriented event investigation, authorized remote inventory, and Active Directory computer discovery.
+**WinAudit** es una herramienta de código abierto, desarrollada en PowerShell nativo, para inventariar procesos de Windows, verificar firmas digitales, investigar eventos por PID, consultar procesos remotos mediante acceso autorizado y descubrir equipos registrados en Active Directory.
 
-> Initial development version. Not yet validated on a Windows test host. Do not rely on it as a complete forensic acquisition tool.
+> **Versión Alpha para pruebas.** El archivo independiente tiene verificadas la sintaxis y la apertura/salida del menú en Windows PowerShell 5.1 y PowerShell 7 mediante [GitHub Actions](https://github.com/DarkCristian/WinAudit/actions/runs/42099606247). Las auditorías reales de procesos, registros, WinRM y AD todavía requieren validación en un entorno Windows autorizado. No debe considerarse una herramienta completa de adquisición forense.
 
-## Features
+## Funciones
 
-| Feature | Status |
+| Función | Estado |
 | --- | --- |
-| Interactive ASCII console with numbered menus | Implemented |
-| Local process / PID / parent PID / command-line inventory | Implemented |
-| Authenticode and SHA-256 evidence for selected running PID | Implemented |
-| Event correlation by PID and time window | Initial implementation |
-| Remote process inventory via WinRM | Implemented |
-| AD computer discovery via RSAT | Implemented |
-| Local JSON report export | Implemented |
-| HTML reports, batch scanning, advanced risk scoring | Planned |
+| Consola ASCII interactiva con menús numéricos | Implementada |
+| Inventario local de procesos, PID, PID padre y líneas de comandos | Implementado |
+| Firma Authenticode y hash SHA-256 del ejecutable de un PID activo seleccionado | Implementados |
+| Correlación de eventos por PID e intervalo horario | Implementación inicial |
+| Inventario de procesos remotos mediante WinRM | Implementado |
+| Descubrimiento de equipos de AD mediante RSAT | Implementado |
+| Exportación local de informes JSON | Implementada |
+| Informes HTML, escaneo por lotes y clasificación avanzada de riesgos | Planificados |
 
-## Requirements
+## Requisitos
 
-- Windows PowerShell 5.1 or PowerShell 7 on Windows.
-- Some process metadata and event logs require elevated privileges.
-- Remote mode requires configured WinRM and authorized access.
-- AD mode requires the RSAT ActiveDirectory PowerShell module.
-- Event coverage depends on enabled Windows logs and retention.
+- Windows PowerShell 5.1 o PowerShell 7 en Windows, según las funciones disponibles.
+- Permisos elevados para acceder a determinados datos de procesos y registros protegidos.
+- WinRM configurado y acceso autorizado para el modo remoto.
+- Módulo PowerShell ActiveDirectory de RSAT para descubrir equipos en AD.
+- Registros de Windows habilitados y con retención suficiente para el período investigado.
 
-## Install Active Directory prerequisites (optional)
+## Dependencias de Active Directory — opcionales
 
-**No compilation is required.** WinAudit runs as PowerShell scripts. RSAT is only required for the menu option that discovers computer objects using `Get-ADComputer`. Local audits and direct remote WinRM audits do **not** require RSAT.
+**WinAudit no requiere compilación:** se ejecuta directamente como scripts PowerShell.
 
-First check whether the module is present:
+RSAT solo es necesario para descubrir objetos de equipo con `Get-ADComputer`. Las auditorías locales y las consultas remotas directas mediante WinRM no requieren RSAT.
+
+Desde la carpeta del repositorio, comprobá si el módulo está disponible:
 
 ```powershell
 Get-Module -ListAvailable ActiveDirectory
 .\Install-Prerequisites.ps1
 ```
 
-If missing, open **Windows PowerShell as Administrator** and run:
+Si falta, abrí **Windows PowerShell como administrador** y ejecutá:
 
 ```powershell
 .\Install-Prerequisites.ps1 -Install
 ```
 
-The installer uses Microsoft's built-in Windows mechanisms:
+El instalador utiliza los mecanismos oficiales de Windows:
 
-- **Windows 10/11 Pro, Enterprise or Education (supported releases):** `Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0`
-- **Windows Server:** `Install-WindowsFeature RSAT-AD-PowerShell`
+| Sistema | Comando utilizado |
+| --- | --- |
+| Windows 10/11 Pro, Enterprise o Education, en versiones compatibles | `Add-WindowsCapability -Online -Name Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0` |
+| Windows Server | `Install-WindowsFeature RSAT-AD-PowerShell` |
 
-On managed systems, installation may require Windows Update, an approved source, or administrator approval. RSAT may be unavailable on unsupported Windows editions. The script does not alter domain settings, enable WinRM, or install software from third-party websites.
+En equipos administrados, la instalación puede depender de Windows Update, de una fuente aprobada o de la autorización del administrador. RSAT puede no estar disponible en determinadas ediciones de Windows. El instalador no modifica la configuración del dominio ni habilita WinRM.
 
-After installation, verify:
+Después de instalarlo, verificá:
 
 ```powershell
 Import-Module ActiveDirectory
 Get-Command Get-ADComputer
 ```
 
-Then start WinAudit and choose **[4] Active Directory computer inventory**. Example input: `dc01.ad.example.com`; optional search base: `OU=Workstations,DC=ad,DC=example,DC=com`. Credentials must be authorized for the directory.
+Luego iniciá WinAudit y seleccioná la opción **[4]**, correspondiente al inventario de equipos de Active Directory.
 
-## Installation and execution
+Ejemplos de entrada:
 
-WinAudit supports three launch methods.
+| Campo | Ejemplo ficticio |
+| --- | --- |
+| Dominio | `ad.example.com` |
+| Controlador de dominio | `dc01.ad.example.com` |
+| Base de búsqueda opcional | `OU=Workstations,DC=ad,DC=example,DC=com` |
 
-### Option 1: Clone the repository (Git)
+Las credenciales deben tener permisos de lectura sobre el directorio. Esos permisos no garantizan acceso remoto a los equipos.
 
-Recommended when you want to inspect the source code, keep the modules locally, and update the project later.
+## Instalación y ejecución
+
+Podés iniciar WinAudit de tres maneras.
+
+### Opción 1 — Clonar el repositorio con Git
+
+Permite revisar el código, conservar los módulos localmente y actualizar el proyecto.
 
 ```powershell
 git clone https://github.com/DarkCristian/WinAudit.git
@@ -82,31 +96,41 @@ cd WinAudit
 .\WinAudit.ps1
 ```
 
-Update the checkout with `git pull`.
+Para actualizarlo desde la carpeta del repositorio:
 
-### Option 2: One-command bootstrapper (IRM)
+```powershell
+git pull
+```
 
-Run from Windows PowerShell without Git or a persistent installation:
+### Opción 2 — Bootstrapper mediante IRM
+
+Ejecutá el siguiente comando desde PowerShell en Windows, sin instalar Git:
 
 ```powershell
 irm https://raw.githubusercontent.com/DarkCristian/WinAudit/main/install.ps1 | iex
 ```
 
-The bootstrapper downloads WinAudit and its modules into a temporary directory, runs the console, then removes the downloaded program files. Reports are retained separately. It does not install RSAT or enable WinRM.
+El bootstrapper descarga WinAudit y sus módulos en una carpeta temporal, ejecuta la consola y elimina los archivos del programa al terminar. Los informes se conservan por separado. No instala RSAT ni habilita WinRM.
 
-**Security:** `irm | iex` executes code retrieved from the internet. Review the source and prefer a pinned version for managed environments.
+**Seguridad:** `irm | iex` ejecuta código descargado de Internet. La rama `main` puede cambiar; revisá el código y preferí una revisión fijada a un commit en entornos administrados.
 
-### Option 3: Standalone PowerShell script
+### Opción 3 — Descargar el archivo PowerShell independiente
 
-Download [WinAudit-Standalone.ps1](dist/WinAudit-Standalone.ps1) and run it directly:
+Descargá **WinAudit-Standalone.ps1** desde los **Assets** de la [pre-release v0.1.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.1.0-alpha) y ejecutalo:
 
 ```powershell
 .\WinAudit-Standalone.ps1
 ```
 
-This standalone build includes the application modules in one file and does not require Git. It is an initial development build and has not yet been functionally validated on Windows.
+También podés consultar el [archivo independiente actual en main](dist/WinAudit-Standalone.ps1).
 
-### Non-interactive examples (Git checkout or standalone)
+Incluye los módulos propios en un solo archivo y no requiere Git. RSAT sigue siendo opcional para descubrir equipos de Active Directory; WinRM sigue siendo necesario para el inventario remoto.
+
+**Nota sobre esta pre-release:** el asset `.ps1` contiene la corrección del ensamblado publicada después del tag original. Los archivos automáticos **Source code** corresponden al tag anterior a esa corrección. Para probar el archivo independiente corregido, descargá el asset **WinAudit-Standalone.ps1**. El detalle y su SHA-256 están publicados en las notas de la pre-release.
+
+### Ejemplos sin menú interactivo
+
+Desde una copia del repositorio:
 
 ```powershell
 .\WinAudit.ps1 -FullScan
@@ -114,30 +138,36 @@ This standalone build includes the application modules in one file and does not 
 .\WinAudit.ps1 -ComputerName pc001.ad.example.com
 ```
 
-Replace `WinAudit.ps1` with `WinAudit-Standalone.ps1` when using the standalone file.
+Si utilizás el archivo independiente, reemplazá `WinAudit.ps1` por `WinAudit-Standalone.ps1`.
 
-## Menu
+## Menú
 
-```text
-  [1] List local processes
-  [2] Investigate PID + Windows event logs
-  [3] Remote process inventory (WinRM)
-  [4] Active Directory computer inventory
-  [5] Full local process inventory + JSON report
-  [0] Exit
-```
+Los textos de la consola actualmente están en inglés. Estas son las opciones y su función:
 
-## Evidence caveats
+| Opción | Texto de la consola | Acción |
+| --- | --- | --- |
+| 1 | List local processes | Mostrar procesos locales |
+| 2 | Investigate PID + Windows event logs | Investigar un PID y sus coincidencias en registros de Windows |
+| 3 | Remote process inventory (WinRM) | Consultar procesos de un equipo remoto |
+| 4 | Active Directory computer inventory | Descubrir equipos registrados en AD |
+| 5 | Full local process inventory + JSON report | Exportar el inventario local completo de procesos a JSON |
+| 0 | Exit | Salir |
 
-Windows event records can identify the process **emitting** an event rather than the process being investigated. PIDs are reused and cannot uniquely identify a historical process. WinAudit labels the matching event field and does not automatically infer malicious behavior.
+## Alcance y límites de la evidencia
 
-Reports may contain sensitive host data. They are written locally by default to `%USERPROFILE%\WinAudit-Reports`; never commit real audit reports.
+Un registro de Windows puede identificar al proceso que **emitió** el evento, en lugar del proceso investigado. Además, los PID se reutilizan y no identifican de forma única un proceso histórico. WinAudit indica el campo coincidente y no deduce automáticamente que una actividad sea maliciosa.
 
-## Documentation
+La ausencia de firma digital no demuestra que un ejecutable sea malicioso. La investigación depende de los registros existentes: no se pueden reconstruir actividades que Windows no registró.
 
-- [Usage](docs/USAGE.md)
-- [Security model](docs/SECURITY.md)
+WinAudit consulta y exporta información; no aplica remediaciones ni modifica deliberadamente procesos, servicios, políticas de auditoría o la configuración de WinRM. Su propia ejecución puede generar registros del sistema.
 
-## License
+Los informes pueden contener datos sensibles de los equipos auditados. Por defecto se guardan localmente en `%USERPROFILE%\WinAudit-Reports`. No publiques informes reales ni los incluyas en commits.
 
-MIT. See [LICENSE](LICENSE).
+## Documentación
+
+- [Guía de uso](docs/USAGE.md)
+- [Modelo de seguridad y limitaciones](docs/SECURITY.md)
+
+## Licencia
+
+MIT. Consultá [LICENSE](LICENSE).

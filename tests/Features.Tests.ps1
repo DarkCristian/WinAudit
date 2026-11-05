@@ -90,6 +90,47 @@ try {
     Assert-True ($hashes.SHA256 -eq 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD') 'SHA-256 incorrecto.'
     $md5Only=Get-WAFileEvidence -Path $hashFile -HashAlgorithm MD5
     Assert-True ($md5Only.MD5 -eq $hashes.MD5 -and $null -eq $md5Only.SHA256) 'MD5 independiente incorrecto.'
+
+    $treeFileCache=@{}
+    & $coreModule {
+        $script:SignatureCalls=0
+        function script:Get-AuthenticodeSignature {
+            [CmdletBinding()] param($LiteralPath)
+            $script:SignatureCalls++
+            [pscustomobject]@{Status='Valid'; SignerCertificate=[pscustomobject]@{Subject='CN=Example Publisher'}}
+        }
+    }
+    $treeFileEvidence = & $coreModule { param($Path,$Cache) Get-WATreeFileEvidence -Path $Path -Cache $Cache } $hashFile $treeFileCache
+    Assert-True ($treeFileEvidence.MD5 -eq $hashes.MD5 -and $treeFileEvidence.SignatureStatus -eq 'Valid' -and $treeFileEvidence.Signer -eq 'CN=Example Publisher') 'El arbol debe recopilar MD5 y firma por separado.'
+    [void](& $coreModule { param($Path,$Cache) Get-WATreeFileEvidence -Path $Path -Cache $Cache } $hashFile $treeFileCache)
+    Assert-True ((& $coreModule {$script:SignatureCalls}) -eq 1) 'No debe releer la firma del mismo archivo sin cambios.'
+    [IO.File]::WriteAllText($hashFile,'abcd',(New-Object Text.UTF8Encoding($false)))
+    $changedEvidence = & $coreModule { param($Path,$Cache) Get-WATreeFileEvidence -Path $Path -Cache $Cache } $hashFile $treeFileCache
+    Assert-True ($changedEvidence.MD5 -eq 'E2FC714C4727EE9395F324CD2E7F331F' -and (& $coreModule {$script:SignatureCalls}) -eq 2) 'Debe invalidar cache si cambia el archivo.'
+    $noPath = & $coreModule { Get-WATreeFileEvidence -Path '' }
+    Assert-True ($null -eq $noPath.MD5 -and $noPath.SignatureStatus -eq 'NoDisponible' -and $noPath.MD5Error) 'Una ruta ausente no debe aparecer como archivo sin firma.'
+    & $coreModule {
+        function script:Get-AuthenticodeSignature { [CmdletBinding()] param($LiteralPath) throw 'Firma inaccesible (prueba)' }
+    }
+    $signatureFailed = & $coreModule { param($Path) Get-WATreeFileEvidence -Path $Path } $hashFile
+    Assert-True ($signatureFailed.MD5 -eq $changedEvidence.MD5 -and $signatureFailed.SignatureStatus -eq 'NoDisponible' -and $signatureFailed.SignatureError) 'Un error de firma no debe ocultar un MD5 disponible.'
+    & $coreModule {
+        function script:Get-AuthenticodeSignature { [CmdletBinding()] param($LiteralPath) [pscustomobject]@{Status='NotSigned'; SignerCertificate=$null} }
+    }
+    $unsigned = & $coreModule { param($Path) Get-WATreeFileEvidence -Path $Path } $hashFile
+    Assert-True ($unsigned.SignatureStatus -eq 'NotSigned' -and $null -eq $unsigned.SignatureError) 'Debe distinguir ausencia de firma de error de lectura.'
+    & $coreModule {
+        function script:Get-FileHash { [CmdletBinding()] param($LiteralPath,$Algorithm) throw 'Hash inaccesible (prueba)' }
+    }
+    $hashFailed = & $coreModule { param($Path) Get-WATreeFileEvidence -Path $Path } $hashFile
+    Assert-True ($null -eq $hashFailed.MD5 -and $hashFailed.MD5Error -and $hashFailed.SignatureStatus -eq 'NotSigned') 'Un error de hash no debe ocultar el estado de firma.'
+    & $coreModule {
+        Remove-Item Function:\Get-FileHash
+        function script:Get-AuthenticodeSignature {
+            [CmdletBinding()] param($LiteralPath)
+            [pscustomobject]@{Status='Valid'; SignerCertificate=[pscustomobject]@{Subject='CN=Example Publisher'}}
+        }
+    }
     & $coreModule {
         $script:Processes=@(
             [pscustomobject]@{Name='example.exe';ProcessId=1010;ParentProcessId=1;CreationDate=[datetime]'2026-01-01 10:20:00';ExecutablePath='C:\Example\example.exe';CommandLine=''},
@@ -100,6 +141,7 @@ try {
         )
         function script:Get-CimInstance { param($ClassName) $script:Processes }
     }
+    & $coreModule { param($Path) $script:Processes[0].ExecutablePath=$Path } $hashFile
     $nodes=@{}
     Update-WAObservedProcesses -Nodes $nodes -ProcessName 'example.exe'
     Assert-True ($nodes.Count -eq 3) 'El arbol debe incluir hijos y nietos, excluir otros y rechazar padre mas joven.'
@@ -114,6 +156,11 @@ try {
     [void](Export-WACaptureTree -Nodes $nodes -Metadata $capture -Path $tree)
     $treeText=Get-Content -LiteralPath $tree -Raw
     Assert-True ($treeText -match 'child.exe PID 1112' -and $treeText -notmatch 'unrelated.exe') 'Contenido incorrecto del arbol.'
+    Assert-True ($treeText -match 'example.exe PID 1010 \| MD5: E2FC714C4727EE9395F324CD2E7F331F \| Signature: Valid \| Firmante: CN=Example Publisher') 'Formato del TXT incorrecto.'
+    Assert-True ($treeText -match 'child.exe PID 1112 \| MD5: NoDisponible \| Signature: NoDisponible') 'Debe mostrar evidencia inaccesible sin inventar valores.'
+    $screenTree=Export-WACaptureTree -Nodes $nodes -Metadata $capture -Path $tree -ShowOnScreen 6>&1 | Out-String
+    Assert-True ($screenTree.Contains('example.exe PID 1010 | MD5: E2FC714C4727EE9395F324CD2E7F331F | Signature: Valid')) 'La pantalla debe mostrar el mismo formato de evidencia.'
+    & $coreModule { Remove-Item Function:\Get-AuthenticodeSignature }
     $linkEvent=[pscustomobject]@{LogName='Microsoft-Windows-Sysmon/Operational';Id=10;TimeCreated=$now;RecordId=10;EventXml='<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><EventData><Data Name="SourceProcessId">1010</Data><Data Name="TargetProcessId">2222</Data><Data Name="SourceImage">C:\Example\example.exe</Data><Data Name="TargetImage">C:\Example\other.exe</Data></EventData></Event>'}
     $link=ConvertTo-WAProcessLink -Event $linkEvent
     Assert-True ($link.ToPid -eq '2222' -and $link.Kind -like '*no implica parentesco*') 'Debe separar vinculos de parentesco.'

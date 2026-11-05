@@ -79,5 +79,31 @@ try {
     $nodes.one.SHA256=$null
     Add-WAVirusTotalToProcesses -Nodes $nodes -Context $ctx
     Assert-VT ($nodes.one.VirusTotal.State -eq 'EvidenciaNoDisponible' -and (& $module {$script:Calls}) -eq $before) 'Sin SHA256 capturado no debe enviarse una consulta.'
+    $savedEnv=$env:VIRUSTOTAL_API_KEY
+    $global:WAVTTestCalls=0
+    function global:Invoke-RestMethod {
+        [CmdletBinding()] param($Method,$Uri,$Headers,$MaximumRedirection,$TimeoutSec)
+        $global:WAVTTestCalls++
+        [pscustomobject]@{data=[pscustomobject]@{id=($Uri -split '/')[-1];type='file';attributes=[pscustomobject]@{last_analysis_stats=[pscustomobject]@{malicious=0;suspicious=0;harmless=1;undetected=69};last_analysis_date=1700000000}}}
+    }
+    try {
+        $env:VIRUSTOTAL_API_KEY='WINAUDIT_TEST_KEY_NOT_A_CREDENTIAL'
+        $defaultDir=Join-Path $temp 'default'
+        & (Join-Path $root 'dist/WinAudit-Standalone.ps1') -FilePath $path -ReportDirectory $defaultDir | Out-Null
+        Assert-VT ($global:WAVTTestCalls -eq 0) 'La variable de entorno por si sola no debe activar consultas.'
+        $env:VIRUSTOTAL_API_KEY=$null
+        & (Join-Path $root 'dist/WinAudit-Standalone.ps1') -FilePath $path -VirusTotal -ReportDirectory (Join-Path $temp 'no-key') -WarningAction SilentlyContinue | Out-Null
+        Assert-VT ($global:WAVTTestCalls -eq 0) 'Sin clave debe continuar la auditoria local sin red.'
+        $env:VIRUSTOTAL_API_KEY='WINAUDIT_TEST_KEY_NOT_A_CREDENTIAL'
+        $enabledDir=Join-Path $temp 'enabled'
+        & (Join-Path $root 'dist/WinAudit-Standalone.ps1') -FilePath $path -VirusTotal -ReportDirectory $enabledDir | Out-Null
+        Assert-VT ($global:WAVTTestCalls -eq 1) 'El opt-in explicito debe habilitar una consulta simulada.'
+        $json=Get-Content -LiteralPath (Get-ChildItem -LiteralPath $enabledDir -Filter '*.json')[0].FullName -Raw
+        Assert-VT ($json -notlike '*WINAUDIT_TEST_KEY_NOT_A_CREDENTIAL*' -and ($json | ConvertFrom-Json).Data[0].VirusTotal.State -eq 'Encontrado') 'El informe debe incluir reputacion sin credenciales.'
+    } finally {
+        $env:VIRUSTOTAL_API_KEY=$savedEnv
+        Remove-Item Function:\Invoke-RestMethod -ErrorAction SilentlyContinue
+        Remove-Variable WAVTTestCalls -Scope Global -ErrorAction SilentlyContinue
+    }
 } finally {Remove-Item -LiteralPath $temp -Recurse -Force}
 Write-Host 'PASS VirusTotal: red simulada, opt-in, cache, limites, errores y privacidad.'

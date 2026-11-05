@@ -10,7 +10,7 @@ $ErrorActionPreference = 'Stop'
 $base = 'https://raw.githubusercontent.com/DarkCristian/WinAudit/main'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('WinAudit-' + [guid]::NewGuid().ToString('N'))
 $modules = Join-Path $root 'Modules'
-$paths = @('WinAudit.ps1','Modules/Core.psm1','Modules/Events.psm1','Modules/Directory.psm1')
+$paths = @('WinAudit.ps1','Modules/Reputation.psm1','Modules/Core.psm1','Modules/Events.psm1','Modules/Directory.psm1')
 try {
     [void](New-Item -Path $modules -ItemType Directory -Force)
     foreach ($path in $paths) {

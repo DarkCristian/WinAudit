@@ -15,6 +15,19 @@ param(
     [switch]$Monitor,
     [switch]$FullScan,
     [string]$ComputerName,
+    [string]$DirectoryServer,
+    [ValidateSet('LDAPS','LDAP','RSAT')][string]$DirectoryProtocol='LDAPS',
+    [string]$SearchBase,
+    [ValidateNotNullOrEmpty()][string]$DirectoryNameFilter='*',
+    [switch]$EnabledOnly,
+    [pscredential]$DirectoryCredential,
+    [ValidateRange(0,65535)][int]$DirectoryPort=0,
+    [ValidateSet('Kerberos','Negotiate')][string]$DirectoryAuthentication='Kerberos',
+    [ValidateRange(1,100000)][int]$MaxComputers=10000,
+    [pscredential]$RemoteCredential,
+    [switch]$WinRMUseSSL,
+    [ValidateRange(0,65535)][int]$WinRMPort=0,
+    [ValidateSet('Kerberos','Negotiate')][string]$WinRMAuthentication='Kerberos',
     [Alias('Start')][object]$StartTime,
     [Alias('End')][object]$EndTime,
     [ValidateRange(1,300)][int]$PollSeconds = 5,
@@ -360,6 +373,25 @@ function Export-WACaptureTree {
     return $Path
 }
 
+function Get-WARemoteProcesses {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ComputerName,
+        [pscredential]$Credential,
+        [switch]$UseSSL,
+        [ValidateRange(0,65535)][int]$Port=0,
+        [ValidateSet('Kerberos','Negotiate')][string]$Authentication='Kerberos'
+    )
+    if ([Uri]::CheckHostName($ComputerName) -ne [UriHostNameType]::Dns -or $ComputerName -match '[/\\:\s]') {throw 'WinRM requiere un nombre DNS de equipo, por ejemplo pc001.ad.example.com.'}
+    $query=@{ComputerName=$ComputerName;Authentication=$Authentication;ErrorAction='Stop';ScriptBlock={
+        Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,CreationDate,ExecutablePath,CommandLine
+    }}
+    if ($null -ne $Credential) {$query.Credential=$Credential}
+    if ($UseSSL) {$query.UseSSL=$true}
+    if ($Port -gt 0) {$query.Port=$Port}
+    Invoke-Command @query
+}
+
 
 function ConvertTo-WADateTime {
     [CmdletBinding()]
@@ -550,20 +582,141 @@ function Start-WAEventCapture {
     return $metadata
 }
 
+function ConvertTo-WALdapFilterValue {
+    [CmdletBinding()]
+    param([string]$Value,[switch]$AllowWildcard)
+    $result=New-Object Text.StringBuilder
+    foreach ($character in $Value.ToCharArray()) {
+        switch ([int]$character) {
+            0 {[void]$result.Append('\00')}
+            40 {[void]$result.Append('\28')}
+            41 {[void]$result.Append('\29')}
+            92 {[void]$result.Append('\5c')}
+            42 {if ($AllowWildcard) {[void]$result.Append('*')} else {[void]$result.Append('\2a')}}
+            default {[void]$result.Append($character)}
+        }
+    }
+    return $result.ToString()
+}
+function New-WALdapConnection {
+    [CmdletBinding()]
+    param([string]$Server,[int]$Port,[string]$Authentication,[pscredential]$Credential)
+    $identifier=[System.DirectoryServices.Protocols.LdapDirectoryIdentifier]::new($Server,$Port,$true,$false)
+    $networkCredential=if ($null -ne $Credential) {$Credential.GetNetworkCredential()} else {[Net.CredentialCache]::DefaultNetworkCredentials}
+    return [System.DirectoryServices.Protocols.LdapConnection]::new($identifier,$networkCredential,[System.DirectoryServices.Protocols.AuthType]::$Authentication)
+}
+function Send-WALdapRequest {
+    param($Connection,$Request)
+    return $Connection.SendRequest($Request)
+}
+function Get-WALdapAttribute {
+    param($Entry,[string]$Name)
+    if ($Entry.Attributes.Contains($Name) -and $Entry.Attributes[$Name].Count -gt 0) { return [string]$Entry.Attributes[$Name][0] }
+    return $null
+}
 function Get-WADirectoryComputers {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Server,
-        [Parameter(Mandatory)][pscredential]$Credential,
-        [string]$SearchBase
+        [ValidateSet('LDAPS','LDAP','RSAT')][string]$Protocol='LDAPS',
+        [pscredential]$Credential,
+        [string]$SearchBase,
+        [ValidateNotNullOrEmpty()][string]$NameFilter='*',
+        [switch]$EnabledOnly,
+        [ValidateRange(0,65535)][int]$Port=0,
+        [ValidateSet('Kerberos','Negotiate')][string]$Authentication='Kerberos',
+        [ValidateRange(1,300)][int]$TimeoutSeconds=30,
+        [ValidateRange(1,1000)][int]$PageSize=500,
+        [ValidateRange(1,100000)][int]$MaxComputers=10000
     )
-    if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
-        throw 'ActiveDirectory RSAT module not found. Install RSAT AD PowerShell tools.'
+    if ([Uri]::CheckHostName($Server) -ne [UriHostNameType]::Dns -or $Server -match '[/\\:\s]') { throw 'Usa el nombre DNS del dominio o DC, por ejemplo dc01.ad.example.com; sin URL, IP ni puerto.' }
+    $escaped=ConvertTo-WALdapFilterValue -Value $NameFilter -AllowWildcard
+    $filter='(&(objectCategory=computer)(|(name={0})(dNSHostName={0}))' -f $escaped
+    if ($EnabledOnly) {$filter+='(!(userAccountControl:1.2.840.113556.1.4.803:=2))'}
+    $filter+=')'
+    if ($Protocol -eq 'RSAT') {
+        if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) { throw 'RSAT ActiveDirectory no esta disponible. Usa LDAPS/LDAP o instala la dependencia opcional.' }
+        Import-Module ActiveDirectory -ErrorAction Stop
+        $query=@{LDAPFilter=$filter;Server=$Server;Properties=@('OperatingSystem','LastLogonDate','DNSHostName','Enabled');ResultSetSize=$MaxComputers;ErrorAction='Stop'}
+        if ($null -ne $Credential) {$query.Credential=$Credential}
+        if ($SearchBase) {$query.SearchBase=$SearchBase}
+        $rows=@(Get-ADComputer @query)
+        $mayBeTruncated=$rows.Count -ge $MaxComputers
+        if ($mayBeTruncated) {Write-Warning 'Se alcanzo el limite local. El inventario RSAT puede estar incompleto.'}
+        $rows | Select-Object Name,DNSHostName,OperatingSystem,Enabled,LastLogonDate,DistinguishedName,@{Name='InventorySource';Expression={'RSAT'}},@{Name='QueryTruncated';Expression={$mayBeTruncated}}
+        return
     }
-    Import-Module ActiveDirectory -ErrorAction Stop
-    $args = @{ Filter='*'; Server=$Server; Credential=$Credential; Properties=@('OperatingSystem','LastLogonDate','DNSHostName','Enabled') }
-    if (-not [string]::IsNullOrWhiteSpace($SearchBase)) { $args.SearchBase=$SearchBase }
-    Get-ADComputer @args | Select-Object Name,DNSHostName,OperatingSystem,Enabled,LastLogonDate,DistinguishedName
+    try {Add-Type -AssemblyName System.DirectoryServices.Protocols -ErrorAction Stop}
+    catch {throw 'No esta disponible System.DirectoryServices.Protocols en este runtime de Windows. No se instala ni descarga automaticamente.'}
+    $actualPort=if ($Port -gt 0) {$Port} elseif ($Protocol -eq 'LDAPS') {636} else {389}
+    $connection=$null
+    $items=New-Object 'System.Collections.Generic.List[object]'
+    $truncated=$false
+    try {
+        $connection=New-WALdapConnection -Server $Server -Port $actualPort -Authentication $Authentication -Credential $Credential
+        $connection.Timeout=[TimeSpan]::FromSeconds($TimeoutSeconds)
+        $connection.SessionOptions.ProtocolVersion=3
+        $connection.SessionOptions.ReferralChasing=[System.DirectoryServices.Protocols.ReferralChasingOptions]::None
+        $connection.SessionOptions.SecureSocketLayer=($Protocol -eq 'LDAPS')
+        if ($Protocol -eq 'LDAP') {
+            $connection.SessionOptions.Signing=$true
+            $connection.SessionOptions.Sealing=$true
+        }
+        # No VerifyServerCertificate personalizado: se conserva la validacion de Windows.
+        $connection.Bind()
+        $base=$SearchBase
+        if ([string]::IsNullOrWhiteSpace($base)) {
+            $rootRequest=[System.DirectoryServices.Protocols.SearchRequest]::new('', '(objectClass=*)',[System.DirectoryServices.Protocols.SearchScope]::Base,[string[]]@('defaultNamingContext'))
+            $rootResponse=Send-WALdapRequest -Connection $connection -Request $rootRequest
+            if ($rootResponse.Entries.Count -ne 1) {throw 'WinAudit LDAP: RootDSE no devolvio una base de busqueda unica.'}
+            $base=Get-WALdapAttribute -Entry $rootResponse.Entries[0] -Name 'defaultNamingContext'
+            if ([string]::IsNullOrWhiteSpace($base)) {throw 'WinAudit LDAP: no se encontro defaultNamingContext. Indica SearchBase.'}
+        }
+        $attributes=[string[]]@('name','dNSHostName','operatingSystem','userAccountControl','lastLogonTimestamp')
+        $request=[System.DirectoryServices.Protocols.SearchRequest]::new($base,$filter,[System.DirectoryServices.Protocols.SearchScope]::Subtree,$attributes)
+        $request.TimeLimit=[TimeSpan]::FromSeconds($TimeoutSeconds)
+        $page=[System.DirectoryServices.Protocols.PageResultRequestControl]::new($PageSize)
+        $page.IsCritical=$true
+        [void]$request.Controls.Add($page)
+        $cookies=New-Object 'System.Collections.Generic.HashSet[string]'
+        do {
+            $response=Send-WALdapRequest -Connection $connection -Request $request
+            foreach ($entry in $response.Entries) {
+                if ($items.Count -ge $MaxComputers) {$truncated=$true;break}
+                $uac=0L
+                $hasUac=[long]::TryParse([string](Get-WALdapAttribute $entry 'userAccountControl'),[ref]$uac)
+                $lastLogon=$null; $fileTime=0L
+                if ([long]::TryParse([string](Get-WALdapAttribute $entry 'lastLogonTimestamp'),[ref]$fileTime) -and $fileTime -gt 0) {
+                    try {$lastLogon=[datetime]::FromFileTimeUtc($fileTime)} catch {$lastLogon=$null}
+                }
+                $items.Add([pscustomobject]@{
+                    Name=(Get-WALdapAttribute $entry 'name');DNSHostName=(Get-WALdapAttribute $entry 'dNSHostName')
+                    OperatingSystem=(Get-WALdapAttribute $entry 'operatingSystem');Enabled=$(if ($hasUac) {($uac -band 2) -eq 0} else {$null})
+                    LastLogonDate=$lastLogon;DistinguishedName=$entry.DistinguishedName
+                    InventorySource=$Protocol;QueryTruncated=$false
+                })
+            }
+            $pageResponses=@($response.Controls | Where-Object {$_.Type -eq '1.2.840.113556.1.4.319' -and $_.PSObject.Properties['Cookie']})
+            if ($pageResponses.Count -ne 1) {throw 'WinAudit LDAP: el servidor no confirmo paginacion; no se presenta un inventario completo.'}
+            $cookie=$pageResponses[0].Cookie
+            if ($cookie.Length -gt 0 -and $items.Count -ge $MaxComputers) {$truncated=$true}
+            if ($truncated) {break}
+            if ($cookie.Length -gt 0 -and -not $cookies.Add([Convert]::ToBase64String($cookie))) {throw 'WinAudit LDAP: el servidor repitio una pagina.'}
+            $page.Cookie=$cookie
+        } while ($cookie.Length -gt 0)
+        if ($truncated) {
+            Write-Warning 'Se alcanzo MaxComputers; el inventario LDAP esta incompleto.'
+            foreach ($item in $items) {$item.QueryTruncated=$true}
+        }
+        return $items.ToArray()
+    } catch {
+        $exception=$_.Exception
+        if ($exception.Message -like 'WinAudit LDAP:*') {throw $exception.Message}
+        while ($exception.InnerException) {$exception=$exception.InnerException}
+        $code=if ($exception.PSObject.Properties['ErrorCode']) {[int]$exception.ErrorCode} else {-1}
+        $detail=switch ($code) {49 {'Credenciales rechazadas.'} 8 {'El servidor exige autenticacion mas fuerte.'} 81 {'Servidor inaccesible o fallo de TLS/certificado.'} default {'Revisa DNS, permisos, autenticacion, certificado y conectividad.'}}
+        throw ('No se pudo consultar {0}. {1} No se aplico fallback ni se cambiaron protecciones.' -f $Protocol,$detail)
+    } finally {if ($null -ne $connection) {$connection.Dispose()}}
 }
 
 function Show-Header {
@@ -656,24 +809,45 @@ function Invoke-InteractiveEvents([switch]$Capture) {
     Invoke-EventInvestigation @query -From $window.StartTime -Until $window.EndTime -Capture:$Capture
 }
 function Invoke-RemoteAudit {
-    $hostName = Read-Host 'FQDN del equipo (ej.: pc001.ad.example.com)'
-    if ([string]::IsNullOrWhiteSpace($hostName)) { throw 'El nombre del equipo es obligatorio.' }
-    $credential = Get-Credential -Message 'Credenciales autorizadas para el equipo remoto'
-    $result = Invoke-Command -ComputerName $hostName -Credential $credential -ScriptBlock {
-        Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine
-    } -ErrorAction Stop
+    param([string]$HostName)
+    if (-not $HostName) {$HostName=Read-Host 'FQDN del equipo (ej.: pc001.ad.example.com)'}
+    $mode=Read-Host 'WinRM: [1] sesion actual [2] otras credenciales (lectura AD no garantiza acceso remoto)'
+    $query=@{ComputerName=$HostName;UseSSL=$WinRMUseSSL;Port=$WinRMPort;Authentication=$WinRMAuthentication}
+    if ($mode -eq '2') {$query.Credential=Get-Credential -Message 'Credenciales autorizadas de WinRM'}
+    elseif ($mode -ne '1' -and $mode -ne '') {throw 'Opcion invalida.'}
+    $result=@(Get-WARemoteProcesses @query)
     Show-Result $result
-    Save-Report $result 'remote-processes'
+    Save-Report ([pscustomobject]@{ComputerName=$HostName;Transport='WinRM';UseSSL=[bool]$WinRMUseSSL;Processes=$result}) 'remote-processes'
 }
 function Invoke-DirectoryInventory {
-    $server = Read-Host 'Dominio o DC (ej.: dc01.ad.example.com)'
-    $base = Read-Host 'DN de OU opcional (vacio = contexto predeterminado)'
-    $credential = Get-Credential -Message 'Credenciales autorizadas de lectura del directorio'
-    $query = @{Server=$server; Credential=$credential}
-    if (-not [string]::IsNullOrWhiteSpace($base)) { $query.SearchBase=$base }
-    $items = @(Get-WADirectoryComputers @query)
-    Show-Result ($items | Select-Object -First 100 Name,DNSHostName,OperatingSystem,Enabled)
-    Save-Report $items 'ad-inventory'
+    $server=Read-Host 'Dominio o DC DNS (ej.: dc01.ad.example.com)'
+    $selection=Read-Host 'Descubrimiento: [1] LDAPS (predeterminado) [2] LDAP firmado/cifrado [3] RSAT'
+    $protocol=switch ($selection) {'2' {'LDAP'} '3' {'RSAT'} '1' {'LDAPS'} '' {'LDAPS'} default {throw 'Opcion invalida.'}}
+    $base=Read-Host 'DN de OU opcional (vacio = defaultNamingContext)'
+    $nameFilter=Read-Host 'Nombre o patron (ej.: PC-*; vacio = todos)'
+    if (-not $nameFilter) {$nameFilter='*'}
+    $mode=Read-Host 'Autenticacion: [1] sesion actual [2] otras credenciales de dominio'
+    $query=@{Server=$server;Protocol=$protocol;NameFilter=$nameFilter;MaxComputers=$MaxComputers;Authentication=$DirectoryAuthentication}
+    if ($base) {$query.SearchBase=$base}
+    if ($DirectoryPort -gt 0) {$query.Port=$DirectoryPort}
+    if ($EnabledOnly) {$query.EnabledOnly=$true}
+    if ($mode -eq '2') {$query.Credential=Get-Credential -Message 'Credenciales de lectura del directorio'}
+    elseif ($mode -ne '1' -and $mode -ne '') {throw 'Opcion invalida.'}
+    $items=@(Get-WADirectoryComputers @query)
+    $rows=@(for ($index=0;$index -lt [Math]::Min(100,$items.Count);$index++) {
+        [pscustomobject]@{Numero=($index+1);Name=$items[$index].Name;DNSHostName=$items[$index].DNSHostName;OperatingSystem=$items[$index].OperatingSystem;Enabled=$items[$index].Enabled}
+    })
+    Show-Result $rows
+    Write-Host ('Equipos registrados: {0}. Se muestran hasta 100; WinRM todavia no fue comprobado.' -f $items.Count)
+    Save-Report ([pscustomobject]@{Server=$server;Protocol=$protocol;SearchBase=$base;NameFilter=$nameFilter;Count=$items.Count;Computers=$items}) 'ad-inventory'
+    if ($items.Count -eq 0) {return}
+    $number=Read-Host 'Numero de equipo para consultar por WinRM (vacio = solo inventario)'
+    if ([string]::IsNullOrWhiteSpace($number)) {return}
+    $selected=0
+    if (-not [int]::TryParse($number,[ref]$selected) -or $selected -lt 1 -or $selected -gt $rows.Count) {throw 'Selecciona un numero de la tabla mostrada.'}
+    $target=$items[$selected-1].DNSHostName
+    if ([string]::IsNullOrWhiteSpace($target)) {throw 'El objeto no tiene DNSHostName; no se adivina un destino remoto.'}
+    Invoke-RemoteAudit -HostName $target
 }
 function Invoke-FileEvidenceMenu {
     $path = (Read-Host 'Ruta del archivo a verificar').Trim('"')
@@ -737,6 +911,15 @@ if ($VirusTotal) {
 }
 if ($VirusTotal -and ($FullScan -or $ComputerName)) { throw '-VirusTotal solo admite busqueda, investigacion, archivo o captura local en esta version.' }
 $hasWindow = $PSBoundParameters.ContainsKey('StartTime') -or $PSBoundParameters.ContainsKey('EndTime')
+if ($DirectoryServer) {
+    if ($FindProcess -or $PIDToAudit -gt 0 -or $Monitor -or $ComputerName -or $FullScan -or $FilePath -or $hasWindow -or $VirusTotal) {throw '-DirectoryServer consulta solo inventario. Selecciona despues un host con -ComputerName o el menu.'}
+    $query=@{Server=$DirectoryServer;Protocol=$DirectoryProtocol;NameFilter=$DirectoryNameFilter;SearchBase=$SearchBase;EnabledOnly=$EnabledOnly;Port=$DirectoryPort;Authentication=$DirectoryAuthentication;MaxComputers=$MaxComputers}
+    if ($null -ne $DirectoryCredential) {$query.Credential=$DirectoryCredential}
+    $items=@(Get-WADirectoryComputers @query)
+    Show-Result ($items | Select-Object -First 100 Name,DNSHostName,OperatingSystem,Enabled)
+    Save-Report ([pscustomobject]@{Server=$DirectoryServer;Protocol=$DirectoryProtocol;Count=$items.Count;Computers=$items}) 'ad-inventory'
+    return
+}
 $from = if ($null -eq $StartTime) { if ($Monitor) {Get-Date} else {(Get-Date).AddHours(-24)} } else { ConvertTo-WADateTime $StartTime }
 $until = if ($null -eq $EndTime) { Get-Date } else { ConvertTo-WADateTime $EndTime }
 if ($until -le $from) { throw 'El fin debe ser posterior al inicio.' }
@@ -760,19 +943,19 @@ if ($Monitor -or $PIDToAudit -gt 0 -or ($FindProcess -and $hasWindow)) {
 if ($FindProcess) { Save-Report ([pscustomobject]@{Query=$FindProcess; CurrentProcesses=@(Invoke-LocalProcesses -Name $FindProcess)}) 'process-search'; return }
 if ($FullScan) { Save-Report ([pscustomobject]@{CurrentProcesses=@(Get-WAProcesses)}) 'local-processes'; return }
 if ($ComputerName) {
-    $credential = Get-Credential -Message 'Credenciales autorizadas para el equipo remoto'
-    $data = Invoke-Command -ComputerName $ComputerName -Credential $credential -ScriptBlock {
-        Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine
-    }
-    Save-Report $data 'remote-processes'
+    $query=@{ComputerName=$ComputerName;UseSSL=$WinRMUseSSL;Port=$WinRMPort;Authentication=$WinRMAuthentication}
+    $query.Credential=if ($null -ne $RemoteCredential) {$RemoteCredential} else {Get-Credential -Message 'Credenciales autorizadas para WinRM'}
+    $data=@(Get-WARemoteProcesses @query)
+    Save-Report ([pscustomobject]@{ComputerName=$ComputerName;Transport='WinRM';UseSSL=[bool]$WinRMUseSSL;Processes=$data}) 'remote-processes'
     return
 }
+
 while ($true) {
     Show-Header
     Write-Host '  [1] Mostrar procesos locales'
     Write-Host '  [2] Consultar eventos historicos por PID o nombre'
     Write-Host '  [3] Inventario remoto de procesos (WinRM)'
-    Write-Host '  [4] Inventario de equipos de Active Directory'
+    Write-Host '  [4] Descubrir equipos por LDAP/LDAPS o RSAT y seleccionar WinRM'
     Write-Host '  [5] Inventario local completo + informe JSON'
     Write-Host '  [6] Buscar proceso activo por nombre (example.exe)'
     Write-Host '  [7] Capturar eventos hasta un horario futuro'

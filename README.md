@@ -10,9 +10,53 @@
     AUDITOR DE SEGURIDAD Y ANALISIS FORENSE DE WINDOWS
 ```
 
-**WinAudit** es una herramienta de código abierto, desarrollada en PowerShell nativo, para inventariar procesos de Windows, verificar firmas digitales, investigar eventos por PID, consultar procesos remotos mediante acceso autorizado y descubrir equipos registrados en Active Directory.
+**WinAudit** es una herramienta de código abierto, desarrollada en PowerShell nativo, para investigar procesos de Windows y sus eventos por PID o nombre, consultar intervalos históricos, monitorear hasta un horario futuro y generar informes de árbol de procesos. Incluye verificación Authenticode, hashes SHA-256/MD5, inventario remoto autorizado mediante WinRM y descubrimiento de equipos en Active Directory.
 
 > **Versión Alpha para pruebas.** El proyecto incluye [pruebas automatizadas](https://github.com/DarkCristian/WinAudit/actions/workflows/validate-standalone.yml) para Windows PowerShell 5.1 y PowerShell 7, con eventos sintéticos, validación de fechas y comprobación del archivo independiente. Las auditorías reales de procesos, registros, WinRM y AD todavía requieren validación en un entorno Windows autorizado. No debe considerarse una herramienta completa de adquisición forense.
+
+## Versión publicada y avance
+
+**[WinAudit v0.2.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.2.0-alpha) — pre-release publicada el 5 de noviembre de 2026.**
+
+Esta versión incorpora búsqueda exacta por nombre con todos los PID activos, consultas históricas con inicio y fin, captura local con espera y guardado progresivo, informe TXT del árbol observado y verificación de archivos con SHA-256, MD5 o ambos. Los informes incluyen eventos JSONL, resumen JSON y evidencia de procesos JSON. Las opciones 6, 7 y 8 del menú reúnen las nuevas funciones.
+
+| Área | Avance verificable |
+| --- | --- |
+| Código y distribución | Publicados en `v0.2.0-alpha`; el standalone de `main` coincide con el del tag al actualizar esta documentación |
+| Pruebas en Windows PowerShell 5.1 y PowerShell 7 | [Aprobadas con datos sintéticos](https://github.com/DarkCristian/WinAudit/actions/runs/42104230332): sintaxis, ensamblado, fechas, búsqueda, correlación, captura, árbol con PID reutilizado y hashes conocidos |
+| Validación operativa | Pendiente contra registros reales, permisos, WinRM y AD en un entorno Windows autorizado |
+| Próximas funciones | Informes HTML, escaneo por lotes y clasificación avanzada de riesgos; todavía no implementados |
+
+La captura funciona en la sesión actual y requiere mantener la terminal abierta. El árbol refleja la evidencia observada y puede perder procesos breves entre lecturas. Esta publicación conserva el estado **Alpha**.
+
+### Identificadores de la versión
+
+| Identificador | SHA |
+| --- | --- |
+| Commit Git al que apunta `v0.2.0-alpha` (SHA-1) | [`01b0f6d242da8aa05d69ed80bba126b2de8b7e3c`](https://github.com/DarkCristian/WinAudit/commit/01b0f6d242da8aa05d69ed80bba126b2de8b7e3c) |
+| Blob Git de `dist/WinAudit-Standalone.ps1` en el tag (SHA-1) | `1401631dec9ea6d4eb901156d0a599568e880cc8` |
+
+Los SHA-1 anteriores identifican objetos Git. Para comprobar los archivos descargados, usá sus **SHA-256**:
+
+| Archivo publicado | SHA-256 |
+| --- | --- |
+| [WinAudit-Standalone.ps1](https://github.com/DarkCristian/WinAudit/releases/download/v0.2.0-alpha/WinAudit-Standalone.ps1) | `0042b73def90af8bf55c8255698da6b323246388b7bd15fff49e4e55a643ce30` |
+| [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.2.0-alpha/SHA256SUMS.txt) | `7952b9b3450f18fba3a2c106dea3e265d4cb4bb7e2e0e2783e6f4f510ae12c49` |
+
+El archivo `SHA256SUMS.txt` contiene el SHA-256 del script. El segundo hash de la tabla verifica el propio archivo de sumas.
+
+Después de descargar el script, podés verificarlo sin ejecutarlo:
+
+```powershell
+$esperado = '0042b73def90af8bf55c8255698da6b323246388b7bd15fff49e4e55a643ce30'
+$obtenido = (Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256).Hash
+if ($obtenido -ine $esperado) {
+    throw 'El SHA-256 no coincide con el archivo publicado.'
+}
+Write-Host 'SHA-256 verificado.'
+```
+
+Estos identificadores corresponden a `v0.2.0-alpha`; futuros cambios en `main` pueden tener otros hashes.
 
 ## Funciones
 

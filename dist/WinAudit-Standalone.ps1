@@ -1,27 +1,30 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  WinAudit - read-only Windows security auditing console.
+  WinAudit: inventario y consulta de eventos de Windows en modo de solo lectura.
 .DESCRIPTION
-  Interactive local, remote and Active Directory inventory auditing.
-  Requires Windows. Remote access requires authorized PowerShell Remoting.
+  Consulta historica por PID o ejecutable y captura futura local en la sesion actual.
 #>
 [CmdletBinding()]
 param(
-    [int]$PIDToAudit = 0,
+    [Alias('PID')][ValidateRange(0,2147483647)][int]$PIDToAudit = 0,
+    [Alias('ProcessName')][ValidatePattern('^[^\\/:*?"<>|]+\.exe$')][string]$FindProcess,
+    [switch]$Monitor,
     [switch]$FullScan,
     [string]$ComputerName,
-    [datetime]$StartTime = (Get-Date).AddHours(-24),
-    [datetime]$EndTime = (Get-Date),
+    [Alias('Start')][object]$StartTime,
+    [Alias('End')][object]$EndTime,
+    [ValidateRange(1,300)][int]$PollSeconds = 5,
     [string]$ReportDirectory = (Join-Path $env:USERPROFILE 'WinAudit-Reports')
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$script:Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$script:Root = $PSScriptRoot
+
 function Get-WAProcesses {
     [CmdletBinding()]
-    param()
-    Get-CimInstance -ClassName Win32_Process | ForEach-Object {
+    param([string]$Name)
+    Get-CimInstance -ClassName Win32_Process | Where-Object { -not $Name -or $_.Name -ieq $Name } | ForEach-Object {
         [pscustomobject]@{
             Name = $_.Name
             ProcessId = $_.ProcessId
@@ -64,69 +67,175 @@ function Export-WAReport {
 }
 
 
+function ConvertTo-WADateTime {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Value)
+    if ($Value -is [datetime]) { return $Value }
+    $parsed = [datetime]::MinValue
+    $formats = [string[]]@('dd-MM-yyyy HH:mm:ss','yyyy-MM-dd HH:mm:ss','dd-MM-yyyy HH:mm','yyyy-MM-dd HH:mm')
+    if (-not [datetime]::TryParseExact([string]$Value, $formats, [cultureinfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+        throw 'Fecha invalida. Usa dd-MM-yyyy HH:mm:ss o yyyy-MM-dd HH:mm:ss (hora local del equipo).'
+    }
+    return $parsed
+}
 
 function Get-WAEvents {
     <#
     .SYNOPSIS
-      Correlates available event records with a PID and time window.
+      Consulta eventos disponibles por PID o nombre exacto de ejecutable.
     .NOTES
-      Event System/Execution ProcessID is the event emitter, not necessarily the subject.
-      This function labels the matching field; PID reuse can cause false correlations.
+      Se etiqueta el campo coincidente: emisor, sujeto o proceso relacionado.
+      Un PID puede reutilizarse; un nombre no identifica una instancia unica.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][ValidateRange(1,2147483647)][int]$TargetPid,
-        [datetime]$StartTime=(Get-Date).AddHours(-24),
-        [datetime]$EndTime=(Get-Date),
-        [string[]]$Logs=@('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational')
+        [ValidateRange(0,2147483647)][int]$TargetPid = 0,
+        [string]$ProcessName,
+        [datetime]$StartTime = (Get-Date).AddHours(-24),
+        [datetime]$EndTime = (Get-Date),
+        [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational'),
+        [System.Collections.Generic.List[object]]$QueryStatus
     )
-    if ($EndTime -lt $StartTime) { throw 'Invalid time window.' }
+    if ($TargetPid -eq 0 -and [string]::IsNullOrWhiteSpace($ProcessName)) { throw 'Indica un PID o nombre de ejecutable.' }
+    if ($TargetPid -gt 0 -and $ProcessName) { throw 'Usa un solo selector: PID o nombre.' }
+    if ($EndTime -le $StartTime) { throw 'El fin debe ser posterior al inicio.' }
     foreach ($log in $Logs) {
+        $count = 0
+        $state = 'Consultado'
+        $detail = $null
         try {
-            $filter = @{LogName=$log; StartTime=$StartTime; EndTime=$EndTime}
-            $events = Get-WinEvent -FilterHashtable $filter -ErrorAction Stop
-        } catch {
-            Write-Verbose ("Unavailable or empty log {0}: {1}" -f $log,$_.Exception.Message)
-            continue
-        }
-        foreach ($evt in $events) {
-            $evidenceMatches = New-Object System.Collections.Generic.List[string]
-            try {
-                [xml]$xml = $evt.ToXml()
-                $emitter = $xml.Event.System.Execution.ProcessID
-                if ($null -ne $emitter -and [string]$emitter -eq [string]$TargetPid) {
-                    [void]$evidenceMatches.Add('System.Execution.ProcessID (emitter)')
-                }
-                foreach ($node in @($xml.Event.EventData.Data)) {
-                    if ($null -eq $node) { continue }
-                    $field = [string]$node.Name
-                    if ($field -notmatch '^(ProcessId|NewProcessId|ParentProcessId|CreatorProcessId|ClientProcessId|SourceProcessId|TargetProcessId)$') { continue }
-                    $raw = [string]$node.'#text'
-                    $parsed = 0L
-                    if ($raw -match '^0x[0-9a-fA-F]+$') {
-                        $parsed = [Convert]::ToInt64($raw.Substring(2),16)
-                    } elseif ($raw -match '^\d+$') {
-                        $parsed = [long]$raw
+            $events = @(Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=$StartTime; EndTime=$EndTime} -ErrorAction Stop)
+            foreach ($evt in $events) {
+                try {
+                    [xml]$xml = $evt.ToXml()
+                    $evidenceMatches = New-Object System.Collections.Generic.List[string]
+                    $execution = $xml.SelectSingleNode('/Event/System/Execution')
+                    if ($TargetPid -gt 0 -and $null -ne $execution -and $execution.GetAttribute('ProcessID') -eq [string]$TargetPid) {
+                        [void]$evidenceMatches.Add('System.Execution.ProcessID (emisor)')
                     }
-                    if ($parsed -eq $TargetPid) { [void]$evidenceMatches.Add("EventData.$field") }
-                }
-            } catch { Write-Verbose ("Could not parse event {0}: {1}" -f $evt.RecordId,$_.Exception.Message) }
-            if ($evidenceMatches.Count -gt 0) {
-                [pscustomobject]@{
-                    TimeCreated=$evt.TimeCreated
-                    LogName=$evt.LogName
-                    Id=$evt.Id
-                    RecordId=$evt.RecordId
-                    MatchedField=($evidenceMatches -join ', ')
-                    Summary=if ($evt.Message) { ($evt.Message -replace '\s+',' ').Substring(0,[Math]::Min(160,($evt.Message -replace '\s+',' ').Length)) } else { '' }
-                    Message=$evt.Message
+                    foreach ($node in $xml.SelectNodes('/Event/EventData/Data')) {
+                        $field = $node.GetAttribute('Name')
+                        $raw = $node.InnerText
+                        if ($TargetPid -gt 0 -and $field -match '^(ProcessId|NewProcessId|ParentProcessId|CreatorProcessId|ClientProcessId|SourceProcessId|TargetProcessId)$') {
+                            $parsed = -1L
+                            if ($raw -match '^0x[0-9a-fA-F]+$') { $parsed = [Convert]::ToInt64($raw.Substring(2),16) }
+                            elseif ($raw -match '^\d+$') { $parsed = [long]$raw }
+                            if ($parsed -eq $TargetPid) { [void]$evidenceMatches.Add("EventData.$field") }
+                        }
+                        if ($ProcessName -and $field -match '^(Image|NewProcessName|ProcessName|ApplicationName|SourceImage|TargetImage|ParentImage)$') {
+                            $leaf = ($raw.Trim('"') -split '[\\/]')[-1]
+                            if ($leaf -ieq $ProcessName) { [void]$evidenceMatches.Add("EventData.$field (nombre)") }
+                        }
+                    }
+                    if ($evidenceMatches.Count -gt 0) {
+                        $count++
+                        $message = [string]$evt.Message
+                        $summary = $message -replace '\s+',' '
+                        [pscustomobject]@{
+                            TimeCreated=$evt.TimeCreated; LogName=$evt.LogName; Id=$evt.Id; RecordId=$evt.RecordId
+                            MatchedField=($evidenceMatches -join ', ')
+                            Summary=$summary.Substring(0,[Math]::Min(160,$summary.Length))
+                            Message=$message; EventXml=$evt.ToXml()
+                        }
+                    }
+                } catch {
+                    $state = 'Parcial'
+                    $detail = 'No se pudo interpretar uno o mas eventos: ' + $_.Exception.Message
                 }
             }
+        } catch {
+            if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $state = 'SinEventosEnIntervalo' }
+            else { $state = 'NoDisponible'; $detail = $_.Exception.Message }
         }
+        if ($null -ne $QueryStatus) {
+            $QueryStatus.Add([pscustomobject]@{LogName=$log; State=$state; MatchedCount=$count; Detail=$detail; CheckedAt=(Get-Date).ToString('o')})
+        }
+        if ($state -eq 'NoDisponible' -or $state -eq 'Parcial') { Write-Warning ("{0}: {1}. {2}" -f $log,$state,$detail) }
     }
 }
 
-
+function Start-WAEventCapture {
+    <# Mantener esta sesion abierta. No crea tareas programadas ni cambia auditorias. #>
+    [CmdletBinding()]
+    param(
+        [ValidateRange(0,2147483647)][int]$TargetPid = 0,
+        [string]$ProcessName,
+        [Parameter(Mandatory)][datetime]$StartTime,
+        [Parameter(Mandatory)][datetime]$EndTime,
+        [Parameter(Mandatory)][string]$Directory,
+        [ValidateRange(1,300)][int]$PollSeconds = 5,
+        [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational')
+    )
+    if (($TargetPid -eq 0 -and -not $ProcessName) -or ($TargetPid -gt 0 -and $ProcessName)) { throw 'Indica un solo selector: PID o nombre.' }
+    if ($EndTime -le $StartTime -or $EndTime -le (Get-Date)) { throw 'La captura necesita un fin futuro posterior al inicio.' }
+    [void](New-Item -ItemType Directory -Path $Directory -Force)
+    $runId = 'capture-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8)
+    $journal = Join-Path $Directory ($runId + '.jsonl')
+    $manifest = Join-Path $Directory ($runId + '.json')
+    [IO.File]::WriteAllText($journal, '', (New-Object Text.UTF8Encoding($false)))
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]'
+    $statuses = New-Object 'System.Collections.Generic.List[object]'
+    $metadata = [pscustomobject]@{
+        Tool='WinAudit'; Mode='EventCapture'; Host=$env:COMPUTERNAME
+        TimeZone=[TimeZoneInfo]::Local.Id; RequestedStart=$StartTime.ToString('o'); RequestedEnd=$EndTime.ToString('o')
+        TargetPid=$TargetPid; ProcessName=$ProcessName; State='Esperando'; MatchedCount=0
+        StartedAt=(Get-Date).ToString('o'); UpdatedAt=$null; LastQueryEnd=$null; FinishedAt=$null
+        EventFile=$journal; Sources=@(); SourceIssues=@(); Limitations='Depende de logs habilitados y retencion. PID reutilizable; nombre no identifica instancia. Eventos tardios pueden faltar.'
+    }
+    $cursor = $StartTime
+    try {
+        $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
+        Write-Host ("Captura local de {0} a {1}. Zona: {2}. Mantene esta terminal abierta; Ctrl+C cancela." -f $StartTime,$EndTime,$metadata.TimeZone)
+        while ((Get-Date) -lt $StartTime) { Start-Sleep -Seconds 1 }
+        $metadata.State = 'Capturando'
+        while ($true) {
+            $now = Get-Date
+            $upper = if ($now -lt $EndTime) { $now } else { $EndTime }
+            $lower = $cursor.AddSeconds(-2)
+            if ($lower -lt $StartTime) { $lower = $StartTime }
+            if ($upper -gt $lower) {
+                $statuses.Clear()
+                $query = @{TargetPid=$TargetPid; ProcessName=$ProcessName; StartTime=$lower; EndTime=$upper; Logs=$Logs; QueryStatus=$statuses}
+                Get-WAEvents @query | ForEach-Object {
+                    $key = '{0}|{1}|{2}' -f $_.LogName,$_.RecordId,$_.TimeCreated.ToString('o')
+                    if ($seen.Add($key)) {
+                        $_ | ConvertTo-Json -Depth 8 -Compress | Add-Content -LiteralPath $journal -Encoding UTF8
+                        $metadata.MatchedCount++
+                    }
+                }
+                $cursor = $upper
+                $metadata.LastQueryEnd = $upper.ToString('o')
+                $metadata.Sources = @($statuses.ToArray())
+                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
+                $metadata.UpdatedAt = (Get-Date).ToString('o')
+                $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
+            }
+            if ($now -ge $EndTime) { break }
+            $remaining = ($EndTime - (Get-Date)).TotalSeconds
+            if ($remaining -gt 0) { Start-Sleep -Milliseconds ([int][Math]::Max(1,[Math]::Min($PollSeconds * 1000,$remaining * 1000))) }
+        }
+        # Ultima lectura con margen para escrituras de eventos ligeramente demoradas.
+        Start-Sleep -Seconds 2
+        $statuses.Clear()
+        Get-WAEvents -TargetPid $TargetPid -ProcessName $ProcessName -StartTime $StartTime -EndTime $EndTime -Logs $Logs -QueryStatus $statuses | ForEach-Object {
+            $key = '{0}|{1}|{2}' -f $_.LogName,$_.RecordId,$_.TimeCreated.ToString('o')
+            if ($seen.Add($key)) {
+                $_ | ConvertTo-Json -Depth 8 -Compress | Add-Content -LiteralPath $journal -Encoding UTF8
+                $metadata.MatchedCount++
+            }
+        }
+        $metadata.Sources = @($statuses.ToArray())
+                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
+        $metadata.State = if ($metadata.SourceIssues.Count -gt 0) { 'FinalizadaConLimitaciones' } else { 'Finalizada' }
+    } finally {
+        if ($metadata.State -in @('Esperando','Capturando')) { $metadata.State = 'Interrumpida' }
+        $metadata.FinishedAt = (Get-Date).ToString('o')
+        $metadata.UpdatedAt = $metadata.FinishedAt
+        $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
+        Write-Host "Estado: $($metadata.State). Eventos: $journal. Resumen: $manifest"
+    }
+    return $metadata
+}
 
 function Get-WADirectoryComputers {
     [CmdletBinding()]
@@ -144,9 +253,6 @@ function Get-WADirectoryComputers {
     Get-ADComputer @args | Select-Object Name,DNSHostName,OperatingSystem,Enabled,LastLogonDate,DistinguishedName
 }
 
-
-
-
 function Show-Header {
     Clear-Host
     Write-Host '  __        ___         _             _ _ _   ' -ForegroundColor Cyan
@@ -159,103 +265,140 @@ function Show-Header {
     Write-Host '  READ-ONLY | Local / Remote / Active Directory' -ForegroundColor Green
     Write-Host ''
 }
-function Pause-Menu { [void](Read-Host 'Press ENTER to continue') }
+function Pause-Menu { [void](Read-Host 'Presiona ENTER para continuar') }
 function Read-Number([string]$Prompt) {
     $value = Read-Host $Prompt
     $number = 0
-    if (-not [int]::TryParse($value, [ref]$number) -or $number -lt 1) { throw 'Enter a positive integer.' }
+    if (-not [int]::TryParse($value, [ref]$number) -or $number -lt 1) { throw 'Ingresa un entero positivo.' }
     return $number
 }
+function Read-ExecutableName {
+    $name = Read-Host 'Nombre exacto del ejecutable (ej.: example.exe)'
+    if ($name -notmatch '^[^\\/:*?"<>|]+\.exe$') { throw 'Ingresa solo el nombre, por ejemplo example.exe, sin ruta ni comodines.' }
+    return $name
+}
+function Read-EventWindow([switch]$Capture) {
+    $start = Read-Host $(if ($Capture) {'Inicio (dd-MM-yyyy HH:mm:ss; vacio = ahora)'} else {'Inicio (dd-MM-yyyy HH:mm:ss; vacio = ultimas 24 h)'})
+    $end = Read-Host 'Fin (dd-MM-yyyy HH:mm:ss; vacio = ahora)'
+    $from = if ([string]::IsNullOrWhiteSpace($start)) { if ($Capture) {Get-Date} else {(Get-Date).AddHours(-24)} } else { ConvertTo-WADateTime $start }
+    $until = if ([string]::IsNullOrWhiteSpace($end)) { Get-Date } else { ConvertTo-WADateTime $end }
+    if ($until -le $from) { throw 'El fin debe ser posterior al inicio.' }
+    return @{StartTime=$from; EndTime=$until}
+}
 function Show-Result($Data) {
-    if ($null -eq $Data -or @($Data).Count -eq 0) { Write-Host 'No results.' -ForegroundColor Yellow; return }
+    if ($null -eq $Data -or @($Data).Count -eq 0) { Write-Host 'Sin coincidencias. Revisa tambien la disponibilidad de los registros.' -ForegroundColor Yellow; return }
     $Data | Format-Table -AutoSize | Out-Host
-}
-function Invoke-LocalProcesses {
-    $items = @(Get-WAProcesses)
-    Show-Result ($items | Select-Object -First 40 Name,ProcessId,ParentProcessId,ExecutablePath)
-    Write-Host ("Found {0} processes. Showing first 40." -f $items.Count) -ForegroundColor Gray
-    return $items
-}
-function Invoke-PidInvestigation {
-    $id = Read-Number 'Enter PID (e.g. 1234)'
-    $proc = @(Get-WAProcesses | Where-Object { $_.ProcessId -eq $id })
-    if ($proc.Count -eq 0) {
-        Write-Host 'PID not running. Historical events may still be available.' -ForegroundColor Yellow
-    } else {
-        $proc | Format-List | Out-Host
-        if ($proc[0].ExecutablePath) {
-            Get-WAFileEvidence -Path $proc[0].ExecutablePath | Format-List | Out-Host
-        }
-    }
-    $events = @(Get-WAEvents -TargetPid $id -StartTime $StartTime -EndTime $EndTime)
-    Show-Result ($events | Select-Object -First 35 TimeCreated,LogName,Id,MatchedField,Summary)
-    return [pscustomobject]@{ Process=$proc; Events=$events }
-}
-function Invoke-RemoteAudit {
-    $hostName = Read-Host 'Computer FQDN (e.g. pc001.ad.example.com)'
-    if ([string]::IsNullOrWhiteSpace($hostName)) { throw 'Computer name is required.' }
-    $credential = Get-Credential -Message 'Authorized remote Windows credentials'
-    $result = Invoke-Command -ComputerName $hostName -Credential $credential -ScriptBlock {
-        Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine
-    } -ErrorAction Stop
-    Show-Result ($result | Select-Object -First 40 Name,ProcessId,ParentProcessId,ExecutablePath)
-    return $result
-}
-function Invoke-DirectoryInventory {
-    $server = Read-Host 'Domain/DC FQDN (e.g. dc01.ad.example.com)'
-    $base = Read-Host 'Optional OU DN (blank for default naming context)'
-    $credential = Get-Credential -Message 'Authorized directory read credentials'
-    $args = @{ Server=$server; Credential=$credential }
-    if (-not [string]::IsNullOrWhiteSpace($base)) { $args.SearchBase=$base }
-    $items = @(Get-WADirectoryComputers @args)
-    Show-Result ($items | Select-Object -First 100 Name,DNSHostName,OperatingSystem,Enabled)
-    Write-Host ("Directory objects: {0}. AD inventory does not establish remote reachability." -f $items.Count)
-    return $items
 }
 function Save-Report($Data, [string]$Name) {
     if ($null -eq $Data) { return }
     $path = Export-WAReport -Data $Data -Directory $ReportDirectory -Prefix $Name
-    Write-Host "Report saved: $path" -ForegroundColor Green
+    Write-Host "Informe guardado: $path" -ForegroundColor Green
 }
-if ($EndTime -lt $StartTime) { throw 'EndTime must be later than StartTime.' }
-if ($PIDToAudit -gt 0) {
-    Save-Report -Data (Get-WAEvents -TargetPid $PIDToAudit -StartTime $StartTime -EndTime $EndTime) -Name 'pid-events'
+function Invoke-LocalProcesses([string]$Name) {
+    $items = @(Get-WAProcesses -Name $Name)
+    Show-Result ($items | Select-Object -First 40 Name,ProcessId,ParentProcessId,CreationDate,ExecutablePath)
+    Write-Host ("Procesos: {0}. Se muestran hasta 40." -f $items.Count)
+    return $items
+}
+function Invoke-EventInvestigation {
+    param([int]$TargetPid = 0,[string]$Name,[datetime]$From,[datetime]$Until,[switch]$Capture)
+    if ($Capture) {
+        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds)
+        return
+    }
+    if ($Until -gt (Get-Date)) { throw 'Para un fin futuro usa -Monitor o la opcion 7 del menu.' }
+    $processes = @(Get-WAProcesses -Name $Name | Where-Object { $TargetPid -eq 0 -or $_.ProcessId -eq $TargetPid })
+    Show-Result $processes
+    $evidence = @($processes | ForEach-Object {
+        if ($_.ExecutablePath) {
+            try { Get-WAFileEvidence -Path $_.ExecutablePath } catch { Write-Warning $_.Exception.Message }
+        }
+    })
+    $status = New-Object 'System.Collections.Generic.List[object]'
+    $events = @(Get-WAEvents -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -QueryStatus $status)
+    Show-Result ($events | Select-Object -First 35 TimeCreated,LogName,Id,MatchedField,Summary)
+    Show-Result $status.ToArray()
+    Save-Report ([pscustomobject]@{
+        TargetPid=$TargetPid; ProcessName=$Name; StartTime=$From.ToString('o'); EndTime=$Until.ToString('o')
+        TimeZone=[TimeZoneInfo]::Local.Id; CurrentProcesses=$processes; FileEvidence=$evidence
+        Events=$events; Sources=@($status.ToArray())
+    }) 'event-investigation'
+}
+function Invoke-InteractiveEvents([switch]$Capture) {
+    $selector = Read-Host 'Buscar por [1] PID o [2] nombre de ejecutable'
+    $query = @{}
+    if ($selector -eq '1') { $query.TargetPid = Read-Number 'PID (ej.: 1234)' }
+    elseif ($selector -eq '2') { $query.Name = Read-ExecutableName }
+    else { throw 'Opcion invalida.' }
+    $window = Read-EventWindow -Capture:$Capture
+    Invoke-EventInvestigation @query -From $window.StartTime -Until $window.EndTime -Capture:$Capture
+}
+function Invoke-RemoteAudit {
+    $hostName = Read-Host 'FQDN del equipo (ej.: pc001.ad.example.com)'
+    if ([string]::IsNullOrWhiteSpace($hostName)) { throw 'El nombre del equipo es obligatorio.' }
+    $credential = Get-Credential -Message 'Credenciales autorizadas para el equipo remoto'
+    $result = Invoke-Command -ComputerName $hostName -Credential $credential -ScriptBlock {
+        Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine
+    } -ErrorAction Stop
+    Show-Result $result
+    Save-Report $result 'remote-processes'
+}
+function Invoke-DirectoryInventory {
+    $server = Read-Host 'Dominio o DC (ej.: dc01.ad.example.com)'
+    $base = Read-Host 'DN de OU opcional (vacio = contexto predeterminado)'
+    $credential = Get-Credential -Message 'Credenciales autorizadas de lectura del directorio'
+    $query = @{Server=$server; Credential=$credential}
+    if (-not [string]::IsNullOrWhiteSpace($base)) { $query.SearchBase=$base }
+    $items = @(Get-WADirectoryComputers @query)
+    Show-Result ($items | Select-Object -First 100 Name,DNSHostName,OperatingSystem,Enabled)
+    Save-Report $items 'ad-inventory'
+}
+$hasWindow = $PSBoundParameters.ContainsKey('StartTime') -or $PSBoundParameters.ContainsKey('EndTime')
+$from = if ($null -eq $StartTime) { if ($Monitor) {Get-Date} else {(Get-Date).AddHours(-24)} } else { ConvertTo-WADateTime $StartTime }
+$until = if ($null -eq $EndTime) { Get-Date } else { ConvertTo-WADateTime $EndTime }
+if ($until -le $from) { throw 'El fin debe ser posterior al inicio.' }
+if ($PIDToAudit -gt 0 -and $FindProcess) { throw 'Usa -PIDToAudit o -FindProcess, no ambos.' }
+if ($ComputerName -and ($Monitor -or $FindProcess -or $PIDToAudit -gt 0 -or $hasWindow -or $FullScan)) { throw '-ComputerName solo admite inventario remoto en esta version.' }
+if ($FullScan -and ($Monitor -or $FindProcess -or $PIDToAudit -gt 0 -or $hasWindow)) { throw '-FullScan solo admite inventario local en esta version.' }
+if (($Monitor -or $hasWindow) -and $PIDToAudit -eq 0 -and -not $FindProcess) { throw 'Para consultar o capturar eventos indica -PIDToAudit o -FindProcess.' }
+if ($Monitor -and -not $PSBoundParameters.ContainsKey('EndTime')) { throw '-Monitor requiere -EndTime explicito.' }
+if ($Monitor -or $PIDToAudit -gt 0 -or ($FindProcess -and $hasWindow)) {
+    Invoke-EventInvestigation -TargetPid $PIDToAudit -Name $FindProcess -From $from -Until $until -Capture:$Monitor
     return
 }
+if ($FindProcess) { Save-Report ([pscustomobject]@{Query=$FindProcess; CurrentProcesses=@(Invoke-LocalProcesses -Name $FindProcess)}) 'process-search'; return }
+if ($FullScan) { Save-Report ([pscustomobject]@{CurrentProcesses=@(Get-WAProcesses)}) 'local-processes'; return }
 if ($ComputerName) {
-    $credential = Get-Credential -Message 'Authorized remote Windows credentials'
+    $credential = Get-Credential -Message 'Credenciales autorizadas para el equipo remoto'
     $data = Invoke-Command -ComputerName $ComputerName -Credential $credential -ScriptBlock {
         Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine
     }
-    Save-Report -Data $data -Name 'remote-processes'
-    return
-}
-if ($FullScan) {
-    Save-Report -Data (Get-WAProcesses) -Name 'local-processes'
+    Save-Report $data 'remote-processes'
     return
 }
 while ($true) {
     Show-Header
-    Write-Host '  [1] List local processes'
-    Write-Host '  [2] Investigate PID + Windows event logs'
-    Write-Host '  [3] Remote process inventory (WinRM)'
-    Write-Host '  [4] Active Directory computer inventory'
-    Write-Host '  [5] Full local process inventory + JSON report'
-    Write-Host '  [0] Exit'
-    Write-Host ''
-    $choice = Read-Host 'Select an option'
+    Write-Host '  [1] Mostrar procesos locales'
+    Write-Host '  [2] Consultar eventos historicos por PID o nombre'
+    Write-Host '  [3] Inventario remoto de procesos (WinRM)'
+    Write-Host '  [4] Inventario de equipos de Active Directory'
+    Write-Host '  [5] Inventario local completo + informe JSON'
+    Write-Host '  [6] Buscar proceso activo por nombre (example.exe)'
+    Write-Host '  [7] Capturar eventos hasta un horario futuro'
+    Write-Host '  [0] Salir'
+    $choice = Read-Host 'Selecciona una opcion'
     try {
         switch ($choice) {
             '1' { [void](Invoke-LocalProcesses) }
-            '2' { $result = Invoke-PidInvestigation; Save-Report -Data $result -Name 'pid-investigation' }
-            '3' { $result = Invoke-RemoteAudit; Save-Report -Data $result -Name 'remote-processes' }
-            '4' { $result = Invoke-DirectoryInventory; Save-Report -Data $result -Name 'ad-inventory' }
-            '5' { Save-Report -Data (Get-WAProcesses) -Name 'local-processes' }
+            '2' { Invoke-InteractiveEvents }
+            '3' { Invoke-RemoteAudit }
+            '4' { Invoke-DirectoryInventory }
+            '5' { Save-Report ([pscustomobject]@{CurrentProcesses=@(Get-WAProcesses)}) 'local-processes' }
+            '6' { $name = Read-ExecutableName; Save-Report ([pscustomobject]@{Query=$name; CurrentProcesses=@(Invoke-LocalProcesses -Name $name)}) 'process-search' }
+            '7' { Invoke-InteractiveEvents -Capture }
             '0' { return }
-            default { Write-Host 'Invalid option.' -ForegroundColor Yellow }
+            default { Write-Host 'Opcion invalida.' -ForegroundColor Yellow }
         }
-    } catch {
-        Write-Host ("Operation failed: {0}" -f $_.Exception.Message) -ForegroundColor Red
-    }
+    } catch { Write-Host ("Error: {0}" -f $_.Exception.Message) -ForegroundColor Red }
     Pause-Menu
 }

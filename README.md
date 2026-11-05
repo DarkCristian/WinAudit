@@ -6,7 +6,7 @@ WinAudit permite buscar procesos por PID o nombre, verificar firmas Authenticode
 
 > **v0.4.0-alpha — pre-release para pruebas.** Hay pruebas automatizadas con datos y conexiones simulados en Windows PowerShell 5.1 y PowerShell 7. Sigue pendiente la validación operativa con registros reales, un dominio, hosts remotos y una cuenta autorizada de VirusTotal. WinAudit no determina automáticamente si un proceso es malicioso.
 
-[Descargar v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha) · [Guía de uso](docs/USAGE.md) · [Modelo de seguridad y limitaciones](docs/SECURITY.md) · [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065)
+[Código corregido](dist/WinAudit-Standalone.ps1) · [Guía de uso](docs/USAGE.md) · [Modelo de seguridad y limitaciones](docs/SECURITY.md) · [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225)
 
 > **Correcciones de seguridad en `main` (05/11/2026):** usá el código actual o el nuevo bootstrapper. El asset y el tag `v0.4.0-alpha` anteriores **no incluyen estos cambios**. [Revisión y alcance](docs/SECURITY_REVIEW.md).
 
@@ -51,7 +51,7 @@ Para las correcciones de seguridad, descargá el [standalone revisado de main](d
 .\WinAudit-Standalone.ps1
 ```
 
-Incluye los módulos propios en un archivo; no requiere Git. También podés [revisar el código actual](dist/WinAudit-Standalone.ps1). `main` puede avanzar después de la publicación: para reproducir esta versión, usá el asset o el tag `v0.4.0-alpha`.
+Incluye los módulos propios en un archivo; no requiere Git. También podés [revisar el código actual](dist/WinAudit-Standalone.ps1). `main` puede avanzar después de la publicación: para reproducir el código corregido fijado por el launcher, usá el commit y SHA-256 de la sección de seguridad. El asset de `v0.4.0-alpha` corresponde a la versión anterior.
 
 ### 2. Repositorio con Git
 
@@ -61,7 +61,7 @@ cd WinAudit
 .\WinAudit.ps1
 ```
 
-Para actualizar esa copia de `main`, ejecutá `git pull`. Para clonar la versión publicada:
+Para actualizar esa copia de `main`, ejecutá `git pull`. Solo para reproducir la publicación anterior sin estas correcciones:
 
 ```powershell
 git clone --branch v0.4.0-alpha https://github.com/DarkCristian/WinAudit.git
@@ -194,7 +194,7 @@ $obtenido = (Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SH
 if ($obtenido -ine $esperado) { throw 'SHA-256 distinto del publicado.' }
 ```
 
-[Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42114961065): sintaxis, ensamblado, fechas, eventos sintéticos, captura, árbol, hashes, VirusTotal simulado y pruebas de LDAP/LDAPS/RSAT/WinRM simulados, en PowerShell 5.1 y 7. El artefacto incluye el standalone probado y su checksum. Esto no sustituye la validación contra sistemas reales autorizados.
+[Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225): sintaxis, ensamblado, fechas, eventos sintéticos, captura, árbol, hashes, VirusTotal simulado y pruebas de LDAP/LDAPS/RSAT/WinRM simulados, en PowerShell 5.1 y 7. El artefacto incluye el standalone probado y su checksum. También se validan controles de seguridad y rechazo del bootstrapper ante una descarga alterada. Esto no sustituye la validación contra sistemas reales autorizados.
 
 El asset anterior se conserva como referencia histórica; no contiene las correcciones de seguridad de `main`. No se publicó una nueva release en esta revisión.
 

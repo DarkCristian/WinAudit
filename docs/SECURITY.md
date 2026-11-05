@@ -1,17 +1,42 @@
-# Security model
+# Modelo de seguridad
 
-WinAudit is a read-only investigation utility. It does not enable WinRM, change audit policy, terminate processes, or install agents.
+WinAudit consulta evidencia y exporta informes locales. No habilita WinRM, cambia politicas de auditoria, termina procesos ni instala agentes.
 
-## Scope and limitations
-- Run only against systems you administer or are authorized to assess.
-- Active Directory discovery requires RSAT ActiveDirectory and directory permissions.
-- Remote inventory requires configured PowerShell Remoting and appropriate remote permissions.
-- Security, PowerShell and Sysmon event availability depends on OS configuration, audit policy and retention.
-- PID values can be reused. Matching a PID alone does not establish process identity.
-- Event System.Execution.ProcessID describes the event emitter; EventData fields can refer to a different process.
-- An unsigned binary is not automatically malicious, and a valid signature is not proof of safety.
-- Reports may contain usernames, paths, command-line arguments and other sensitive information. Keep them local and access-controlled.
-- No external telemetry or automatic uploads are implemented.
+## Alcance y limites
 
-## Reporting vulnerabilities
-Open a GitHub security advisory for security vulnerabilities. Do not include credentials, private logs or corporate identifiers in public issues.
+- Ejecutalo solo en sistemas que administras o estas autorizado a evaluar.
+- Active Directory requiere RSAT ActiveDirectory y permisos de lectura del directorio.
+- El inventario remoto requiere WinRM configurado y acceso autorizado.
+- La disponibilidad de Security, PowerShell y Sysmon depende de configuracion y retencion.
+- Un PID puede reutilizarse. Una coincidencia no identifica por si sola una instancia historica.
+- System.Execution.ProcessID identifica al emisor; EventData puede referirse a otros procesos.
+- Una firma valida no demuestra que un proceso sea seguro; un archivo sin firma no es automaticamente malicioso.
+- Los hashes y firmas del arbol corresponden al archivo accesible al observar la instancia, no a su memoria.
+- Los informes pueden incluir usuarios, rutas, argumentos y otros datos sensibles: mantenelos locales y con acceso restringido.
+
+## VirusTotal: integracion externa opcional
+
+La integracion esta desactivada por defecto. Importar el modulo, abrir WinAudit o tener `VIRUSTOTAL_API_KEY` definida no inicia solicitudes. Se requiere consultar explicitamente desde el menu avanzado o activar el enriquecimiento. El parametro `-VirusTotal` es una activacion explicita para esa ejecucion.
+
+Solo se implementa `GET https://www.virustotal.com/api/v3/files/{SHA256}` con la clave en la cabecera `x-apikey`. No se suben ejecutables, logs, rutas, nombres de equipo ni informes, y no se piden reanalisis. Se mantiene la validacion HTTPS y no se siguen redirecciones. El proveedor recibe el hash consultado, la clave de su cuenta y la informacion normal de la conexion (por ejemplo, IP de origen).
+
+Cada operador usa su propia API key. El menu la solicita como entrada oculta y la mantiene en memoria de la sesion como SecureString. Para invocar HTTPS se necesita una representacion temporal legible; esto no protege frente a un administrador o proceso que inspeccione la memoria. La alternativa `VIRUSTOTAL_API_KEY` es una variable de entorno en texto: configurala fuera del repositorio y no la incluyas en comandos con valores literales que queden en el historial.
+
+No se exporta el contexto de autenticacion, ni la clave, ni las cabeceras, ni las excepciones o cuerpos HTTP remotos a los informes. Los errores se resumen con estados controlados. No hay una clave compartida de WinAudit ni secretos requeridos por GitHub Actions.
+
+Los resultados se cachean solo durante la sesion (una hora para informes, 15 minutos para hashes no encontrados). Se espacian consultas unicas al menos 16 segundos y se limita cada contexto a 100 peticiones. Un 429 pausa solicitudes durante 60 segundos; un 401/403 detiene nuevas consultas hasta reconfigurar. No se reintenta una peticion automaticamente. Estas medidas no garantizan cuota disponible: la cuenta puede compartir consumo con otras aplicaciones.
+
+Durante la captura se conserva el SHA-256 observado y la reputacion se consulta al finalizar. Una falta de hash o de respuesta no transforma un proceso en seguro ni malicioso. El informe incluye la fecha de analisis del proveedor, si existe. Las estadisticas pueden ser antiguas o contener falsos positivos; cero detecciones no garantiza seguridad.
+
+**Uso empresarial:** revisa la licencia y los terminos de la cuenta de VirusTotal. Su API publica tiene restricciones de uso comercial y de flujos empresariales que no aportan archivos nuevos. Esta integracion no sube archivos y no supone que una cuenta gratuita sea adecuada para una organizacion.
+
+Fuentes oficiales:
+
+- [Consulta por hash y autenticacion](https://docs.virustotal.com/reference/file-info)
+- [Campos de un informe](https://docs.virustotal.com/reference/files)
+- [Errores y cuotas](https://docs.virustotal.com/reference/errors)
+- [API publica y Premium: condiciones y restricciones](https://docs.virustotal.com/reference/public-vs-premium-api)
+
+## Reportar vulnerabilidades
+
+Usa un aviso privado de seguridad de GitHub para vulnerabilidades. No publiques credenciales, logs privados ni identificadores corporativos en issues publicos.

@@ -64,7 +64,7 @@ $byPid=@(Get-WAEvents -TargetPid 1234 -StartTime $now.AddMinutes(-1) -EndTime $n
 Assert-True ($byPid.Count -eq 2) 'Debe correlacionar PID hexadecimal y emisor sin corromper la lista de coincidencias.'
 $byName=@(Get-WAEvents -ProcessName 'example.exe' -StartTime $now.AddMinutes(-1) -EndTime $now.AddMinutes(1) -Logs @('TestLog'))
 Assert-True ($byName.Count -eq 2) 'Debe buscar campos de ejecutable aunque no exista Execution.'
-Assert-True ($byName[0].EventXml -like '<Event>*') 'Debe preservar el XML del evento.'
+Assert-True ($byName[0].EventXml -like '<Event*') 'Debe preservar el XML del evento.'
 Assert-Throws { Get-WAEvents -TargetPid 1234 -StartTime $now -EndTime $now } 'Acepto un intervalo vacio.'
 Assert-Throws { Get-WAEvents -TargetPid 1234 -ProcessName 'example.exe' } 'Acepto dos selectores simultaneos.'
 $state = New-Object 'System.Collections.Generic.List[object]'
@@ -81,6 +81,42 @@ try {
     Assert-True ($rows.Count -eq 2) 'La captura debe esperar, leer y evitar duplicados entre consultas.'
     Assert-True ($capture.MatchedCount -eq 2) 'Conteo incorrecto de captura.'
     Assert-Throws { Start-WAEventCapture -ProcessName 'example.exe' -StartTime $now.AddMinutes(-2) -EndTime $now.AddMinutes(-1) -Directory $temp } 'Acepto una captura ya vencida.'
+    Assert-True (Test-Path -LiteralPath $capture.TreeReportFile) 'Debe generar el informe TXT al terminar.'
+    Assert-True (Test-Path -LiteralPath $capture.ProcessEvidenceFile) 'Debe preservar la evidencia de procesos.'
+    $hashFile=Join-Path $temp 'hash-example.bin'
+    [IO.File]::WriteAllText($hashFile,'abc',(New-Object Text.UTF8Encoding($false)))
+    $hashes=Get-WAFileEvidence -Path $hashFile -HashAlgorithm Both
+    Assert-True ($hashes.MD5 -eq '900150983CD24FB0D6963F7D28E17F72') 'MD5 incorrecto.'
+    Assert-True ($hashes.SHA256 -eq 'BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD') 'SHA-256 incorrecto.'
+    $md5Only=Get-WAFileEvidence -Path $hashFile -HashAlgorithm MD5
+    Assert-True ($md5Only.MD5 -eq $hashes.MD5 -and $null -eq $md5Only.SHA256) 'MD5 independiente incorrecto.'
+    & $coreModule {
+        $script:Processes=@(
+            [pscustomobject]@{Name='example.exe';ProcessId=1010;ParentProcessId=1;CreationDate=[datetime]'2026-01-01 10:20:00';ExecutablePath='C:\Example\example.exe';CommandLine=''},
+            [pscustomobject]@{Name='child.exe';ProcessId=1112;ParentProcessId=1010;CreationDate=[datetime]'2026-01-01 10:21:00';ExecutablePath='C:\Example\child.exe';CommandLine=''},
+            [pscustomobject]@{Name='grandchild.exe';ProcessId=1113;ParentProcessId=1112;CreationDate=[datetime]'2026-01-01 10:22:00';ExecutablePath='C:\Example\grandchild.exe';CommandLine=''},
+            [pscustomobject]@{Name='older.exe';ProcessId=1114;ParentProcessId=1010;CreationDate=[datetime]'2026-01-01 10:10:00';ExecutablePath='C:\Example\older.exe';CommandLine=''},
+            [pscustomobject]@{Name='unrelated.exe';ProcessId=9999;ParentProcessId=1;CreationDate=[datetime]'2026-01-01 10:25:00';ExecutablePath='C:\Example\unrelated.exe';CommandLine=''}
+        )
+        function script:Get-CimInstance { param($ClassName) $script:Processes }
+    }
+    $nodes=@{}
+    Update-WAObservedProcesses -Nodes $nodes -ProcessName 'example.exe'
+    Assert-True ($nodes.Count -eq 3) 'El arbol debe incluir hijos y nietos, excluir otros y rechazar padre mas joven.'
+    $oldRoot=@($nodes.Values | Where-Object {$_.IsRoot})[0]
+    $child=@($nodes.Values | Where-Object {$_.ProcessId -eq 1112})[0]
+    Assert-True ($child.ParentKey -eq $oldRoot.Key) 'Relacion padre-hijo incorrecta.'
+    & $coreModule { $script:Processes[0].CreationDate=[datetime]'2026-01-01 10:30:00' }
+    Update-WAObservedProcesses -Nodes $nodes -ProcessName 'example.exe'
+    Assert-True ($nodes.Count -eq 4) 'Debe conservar dos instancias distintas con un PID reutilizado.'
+    Assert-True ($child.ParentKey -eq $oldRoot.Key) 'No debe reasignar hijos a un PID reutilizado.'
+    $tree=Join-Path $temp 'test-tree.txt'
+    [void](Export-WACaptureTree -Nodes $nodes -Metadata $capture -Path $tree)
+    $treeText=Get-Content -LiteralPath $tree -Raw
+    Assert-True ($treeText -match 'child.exe PID 1112' -and $treeText -notmatch 'unrelated.exe') 'Contenido incorrecto del arbol.'
+    $linkEvent=[pscustomobject]@{LogName='Microsoft-Windows-Sysmon/Operational';Id=10;TimeCreated=$now;RecordId=10;EventXml='<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><EventData><Data Name="SourceProcessId">1010</Data><Data Name="TargetProcessId">2222</Data><Data Name="SourceImage">C:\Example\example.exe</Data><Data Name="TargetImage">C:\Example\other.exe</Data></EventData></Event>'}
+    $link=ConvertTo-WAProcessLink -Event $linkEvent
+    Assert-True ($link.ToPid -eq '2222' -and $link.Kind -like '*no implica parentesco*') 'Debe separar vinculos de parentesco.'
     function global:Clear-Host { }
     function global:Read-Host { param($Prompt) '0' }
     & (Join-Path $root 'WinAudit.ps1')

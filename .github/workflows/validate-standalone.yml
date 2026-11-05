@@ -13,6 +13,15 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Canonical distribution bytes
+        shell: pwsh
+        run: |
+          $file = Join-Path $PWD 'dist/WinAudit-Standalone.ps1'
+          $text = [IO.File]::ReadAllText($file).Replace("`r`n","`n")
+          [IO.File]::WriteAllText($file, $text, (New-Object Text.UTF8Encoding($false)))
+          $expected = git rev-parse 'HEAD:dist/WinAudit-Standalone.ps1'
+          $actual = git hash-object --no-filters -- $file
+          if ($actual -ne $expected) { throw 'Distribution bytes differ from the repository blob.' }
       - name: Windows PowerShell 5.1
         shell: powershell
         run: |

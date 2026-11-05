@@ -16,6 +16,7 @@ function Get-WAProcesses {
 function Get-WAFileEvidence {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path,[ValidateSet('SHA256','MD5','Both')][string]$HashAlgorithm='SHA256')
+    $Path=Resolve-WALocalEvidencePath -Path $Path
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "File not accessible: $Path" }
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     $sha256 = if ($HashAlgorithm -in @('SHA256','Both')) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash } else { $null }
@@ -34,7 +35,7 @@ function Get-WAFileEvidence {
 function Export-WAReport {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Data,[Parameter(Mandatory)][string]$Directory,[string]$Prefix='audit')
-    if (-not (Test-Path -LiteralPath $Directory)) { [void](New-Item -ItemType Directory -Path $Directory -Force) }
+    $Directory=Initialize-WAReportDirectory -Directory $Directory
     $safe = $Prefix -replace '[^a-zA-Z0-9_-]','-'
     $file = Join-Path $Directory ('{0}-{1}-{2}.json' -f $safe,(Get-Date -Format 'yyyyMMdd-HHmmss'),[guid]::NewGuid().ToString('N').Substring(0,8))
     $payload = [pscustomobject]@{
@@ -43,7 +44,7 @@ function Export-WAReport {
         Host = $env:COMPUTERNAME
         Data = @($Data)
     }
-    $payload | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $file -Encoding UTF8
+    [void](New-WAEvidenceFile -Path $file -Content ($payload | ConvertTo-Json -Depth 12))
     return $file
 }
 
@@ -62,6 +63,7 @@ function Get-WATreeFileEvidence {
         return $evidence
     }
     try {
+        $Path=Resolve-WALocalEvidencePath -Path $Path
         $before = Get-Item -LiteralPath $Path -ErrorAction Stop
         if ($before.PSIsContainer) { throw 'La ruta no corresponde a un archivo.' }
         $length = $before.Length
@@ -148,7 +150,7 @@ function Update-WAObservedProcesses {
 function ConvertTo-WAProcessLink {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Event)
-    [xml]$xml = $Event.EventXml
+    $xml = ConvertFrom-WAEventXml -Text $Event.EventXml
     $data = @{}
     foreach ($node in $xml.SelectNodes('/*[local-name()="Event"]/*[local-name()="EventData"]/*[local-name()="Data"]')) { $data[$node.GetAttribute('Name')]=$node.InnerText }
     if ($Event.LogName -eq 'Microsoft-Windows-Sysmon/Operational' -and $Event.Id -eq 1) {
@@ -165,7 +167,7 @@ function Export-WACaptureTree {
     param([Parameter(Mandatory)][hashtable]$Nodes,[Parameter(Mandatory)]$Metadata,[Parameter(Mandatory)][string]$Path,[object[]]$Links=@(),[switch]$ShowOnScreen)
     $lines = New-Object 'System.Collections.Generic.List[string]'
     $visited = New-Object 'System.Collections.Generic.HashSet[string]'
-    function Safe-Label($Value) { (([string]$Value) -replace '[\x00-\x1f\x7f]','?') -replace '\|','/' }
+    function Safe-Label($Value) { (ConvertTo-WADisplayText ([string]$Value)) -replace '\|','/' }
     function Add-TreeNode($Node,[string]$Indent,[int]$Depth) {
         if ($Depth -gt 64 -or -not $visited.Add($Node.Key)) { $lines.Add($Indent + '+-- [ciclo o limite de profundidad]'); return }
         $md5 = if ($Node.PSObject.Properties['MD5'] -and $Node.MD5) { $Node.MD5 } else { 'NoDisponible' }
@@ -220,6 +222,7 @@ function Export-WACaptureTree {
     $lines.Add('MD5 y Signature describen el archivo accesible al observar la instancia, no la memoria ni su contenido historico.')
     $lines.Add('Signature conserva el estado Authenticode: Valid no garantiza que un proceso sea benigno; NotSigned indica ausencia de firma.')
     $lines.Add('Los hashes identifican archivos en disco al leerlos; MD5 no sirve para demostrar integridad frente a manipulacion intencional.')
+    $Path=Resolve-WALocalEvidencePath -Path $Path -AllowMissing
     [IO.File]::WriteAllLines($Path,$lines.ToArray(),(New-Object Text.UTF8Encoding($true)))
     if ($ShowOnScreen) { foreach ($line in $lines) { Write-Host $line } }
     return $Path

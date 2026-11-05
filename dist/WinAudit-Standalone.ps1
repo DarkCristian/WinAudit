@@ -31,11 +31,98 @@ param(
     [Alias('Start')][object]$StartTime,
     [Alias('End')][object]$EndTime,
     [ValidateRange(1,300)][int]$PollSeconds = 5,
+    [ValidateRange(1,100000)][int]$MaxEventsPerLog=10000,
     [string]$ReportDirectory = (Join-Path $env:USERPROFILE 'WinAudit-Reports')
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Root = $PSScriptRoot
+
+function Assert-WASupportedRuntime {
+    [CmdletBinding()]
+    param([version]$Version=([version]($PSVersionTable.PSVersion.ToString().Split('-')[0])),[string]$Platform=$env:OS)
+    if ($Platform -ne 'Windows_NT') {throw 'WinAudit solo admite Windows.'}
+    if (-not $PSBoundParameters.ContainsKey('Version') -and $PSVersionTable.PSVersion.ToString().Contains('-')) {throw 'Usa una version estable y actualizada de PowerShell.'}
+    if ($Version.Major -eq 5 -and $Version.Minor -eq 1) {return}
+    $minimum=switch ('{0}.{1}' -f $Version.Major,$Version.Minor) {
+        '7.4' {[version]'7.4.21'}
+        '7.5' {[version]'7.5.12'}
+        '7.6' {[version]'7.6.7'}
+        default {$null}
+    }
+    if ($null -ne $minimum -and $Version -ge $minimum) {return}
+    if ($Version.Major -eq 7 -and $Version.Minor -gt 6) {Write-Warning 'Rama posterior al relevamiento de seguridad: revisa soporte y avisos de Microsoft.';return}
+    throw 'PowerShell no admitido o anterior al minimo de seguridad revisado: usa 7.4.21+, 7.5.12+ o 7.6.7+ dentro de una rama con soporte, o Windows PowerShell 5.1 con Windows actualizado. WinAudit no instala parches del sistema.'
+}
+function ConvertTo-WADisplayText {
+    [CmdletBinding()]
+    param([AllowEmptyString()][string]$Text)
+    return ($Text -replace '[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]','?')
+}
+function ConvertFrom-WAEventXml {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Text)
+    if ($Text.Length -gt 4194304) {throw 'XML de evento supera el limite de 4 Mi caracteres.'}
+    $settings=New-Object Xml.XmlReaderSettings
+    $settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver=$null
+    $settings.MaxCharactersInDocument=4194304
+    $inputReader=New-Object IO.StringReader($Text)
+    $reader=$null
+    try {
+        $reader=[Xml.XmlReader]::Create($inputReader,$settings)
+        $document=New-Object Xml.XmlDocument
+        $document.XmlResolver=$null
+        $document.Load($reader)
+        return ,$document
+    } finally {
+        if ($null -ne $reader) {$reader.Dispose()}
+        $inputReader.Dispose()
+    }
+}
+function Get-WALocalDriveType {
+    param([string]$Root)
+    return ([IO.DriveInfo]::new($Root)).DriveType
+}
+function Resolve-WALocalEvidencePath {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path,[switch]$AllowMissing)
+    # Rechazar antes de acceder al filesystem: UNC, dispositivos, ADS y controles.
+    if ($Path -match '^[\\/]{2}' -or $Path -match '[\x00-\x1f\x7f-\x9f]' -or $Path -match ':.*:') {throw 'Solo se admiten rutas locales sin UNC, dispositivos, ADS ni controles.'}
+    $full=[IO.Path]::GetFullPath($Path)
+    if ($full -notmatch '^[a-zA-Z]:\\' -or $full.Substring(2).Contains(':')) {throw 'La evidencia requiere una ruta de filesystem local.'}
+    $root=[IO.Path]::GetPathRoot($full)
+    $driveType=Get-WALocalDriveType $root
+    if ($driveType -notin @([IO.DriveType]::Fixed,[IO.DriveType]::Removable,[IO.DriveType]::CDRom,[IO.DriveType]::Ram)) {throw 'No se leen evidencias ni se escriben informes en unidades de red o desconocidas.'}
+    $current=$root
+    $parts=@('')+@($full.Substring($root.Length).Split('\') | Where-Object {$_})
+    foreach ($part in $parts) {
+        if ($part) {$current=[IO.Path]::Combine($current,$part)}
+        try {$attributes=[IO.File]::GetAttributes($current)}
+        catch [IO.FileNotFoundException] {if ($AllowMissing) {return $full};throw}
+        catch [IO.DirectoryNotFoundException] {if ($AllowMissing) {return $full};throw}
+        if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {throw 'Ruta con reparse point o junction rechazada; no se sigue para leer evidencia ni escribir informes.'}
+    }
+    return $full
+}
+function Initialize-WAReportDirectory {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Directory)
+    $full=Resolve-WALocalEvidencePath -Path $Directory -AllowMissing
+    [void][IO.Directory]::CreateDirectory($full)
+    return (Resolve-WALocalEvidencePath -Path $full)
+}
+function New-WAEvidenceFile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path,[string]$Content='')
+    $full=Resolve-WALocalEvidencePath -Path $Path -AllowMissing
+    $stream=[IO.File]::Open($full,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    try {
+        $bytes=(New-Object Text.UTF8Encoding($false)).GetBytes($Content)
+        $stream.Write($bytes,0,$bytes.Length)
+    } finally {$stream.Dispose()}
+    return $full
+}
 
 
 function New-WAVirusTotalContext {
@@ -164,6 +251,7 @@ function Get-WAProcesses {
 function Get-WAFileEvidence {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path,[ValidateSet('SHA256','MD5','Both')][string]$HashAlgorithm='SHA256')
+    $Path=Resolve-WALocalEvidencePath -Path $Path
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "File not accessible: $Path" }
     $signature = Get-AuthenticodeSignature -LiteralPath $Path
     $sha256 = if ($HashAlgorithm -in @('SHA256','Both')) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash } else { $null }
@@ -182,7 +270,7 @@ function Get-WAFileEvidence {
 function Export-WAReport {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Data,[Parameter(Mandatory)][string]$Directory,[string]$Prefix='audit')
-    if (-not (Test-Path -LiteralPath $Directory)) { [void](New-Item -ItemType Directory -Path $Directory -Force) }
+    $Directory=Initialize-WAReportDirectory -Directory $Directory
     $safe = $Prefix -replace '[^a-zA-Z0-9_-]','-'
     $file = Join-Path $Directory ('{0}-{1}-{2}.json' -f $safe,(Get-Date -Format 'yyyyMMdd-HHmmss'),[guid]::NewGuid().ToString('N').Substring(0,8))
     $payload = [pscustomobject]@{
@@ -191,7 +279,7 @@ function Export-WAReport {
         Host = $env:COMPUTERNAME
         Data = @($Data)
     }
-    $payload | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $file -Encoding UTF8
+    [void](New-WAEvidenceFile -Path $file -Content ($payload | ConvertTo-Json -Depth 12))
     return $file
 }
 
@@ -210,6 +298,7 @@ function Get-WATreeFileEvidence {
         return $evidence
     }
     try {
+        $Path=Resolve-WALocalEvidencePath -Path $Path
         $before = Get-Item -LiteralPath $Path -ErrorAction Stop
         if ($before.PSIsContainer) { throw 'La ruta no corresponde a un archivo.' }
         $length = $before.Length
@@ -296,7 +385,7 @@ function Update-WAObservedProcesses {
 function ConvertTo-WAProcessLink {
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Event)
-    [xml]$xml = $Event.EventXml
+    $xml = ConvertFrom-WAEventXml -Text $Event.EventXml
     $data = @{}
     foreach ($node in $xml.SelectNodes('/*[local-name()="Event"]/*[local-name()="EventData"]/*[local-name()="Data"]')) { $data[$node.GetAttribute('Name')]=$node.InnerText }
     if ($Event.LogName -eq 'Microsoft-Windows-Sysmon/Operational' -and $Event.Id -eq 1) {
@@ -313,7 +402,7 @@ function Export-WACaptureTree {
     param([Parameter(Mandatory)][hashtable]$Nodes,[Parameter(Mandatory)]$Metadata,[Parameter(Mandatory)][string]$Path,[object[]]$Links=@(),[switch]$ShowOnScreen)
     $lines = New-Object 'System.Collections.Generic.List[string]'
     $visited = New-Object 'System.Collections.Generic.HashSet[string]'
-    function Safe-Label($Value) { (([string]$Value) -replace '[\x00-\x1f\x7f]','?') -replace '\|','/' }
+    function Safe-Label($Value) { (ConvertTo-WADisplayText ([string]$Value)) -replace '\|','/' }
     function Add-TreeNode($Node,[string]$Indent,[int]$Depth) {
         if ($Depth -gt 64 -or -not $visited.Add($Node.Key)) { $lines.Add($Indent + '+-- [ciclo o limite de profundidad]'); return }
         $md5 = if ($Node.PSObject.Properties['MD5'] -and $Node.MD5) { $Node.MD5 } else { 'NoDisponible' }
@@ -368,6 +457,7 @@ function Export-WACaptureTree {
     $lines.Add('MD5 y Signature describen el archivo accesible al observar la instancia, no la memoria ni su contenido historico.')
     $lines.Add('Signature conserva el estado Authenticode: Valid no garantiza que un proceso sea benigno; NotSigned indica ausencia de firma.')
     $lines.Add('Los hashes identifican archivos en disco al leerlos; MD5 no sirve para demostrar integridad frente a manipulacion intencional.')
+    $Path=Resolve-WALocalEvidencePath -Path $Path -AllowMissing
     [IO.File]::WriteAllLines($Path,$lines.ToArray(),(New-Object Text.UTF8Encoding($true)))
     if ($ShowOnScreen) { foreach ($line in $lines) { Write-Host $line } }
     return $Path
@@ -420,7 +510,8 @@ function Get-WAEvents {
         [datetime]$StartTime = (Get-Date).AddHours(-24),
         [datetime]$EndTime = (Get-Date),
         [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational'),
-        [System.Collections.Generic.List[object]]$QueryStatus
+        [System.Collections.Generic.List[object]]$QueryStatus,
+        [ValidateRange(1,100000)][int]$MaxEventsPerLog=10000
     )
     if ($TargetPid -eq 0 -and [string]::IsNullOrWhiteSpace($ProcessName)) { throw 'Indica un PID o nombre de ejecutable.' }
     if ($TargetPid -gt 0 -and $ProcessName) { throw 'Usa un solo selector: PID o nombre.' }
@@ -430,10 +521,14 @@ function Get-WAEvents {
         $state = 'Consultado'
         $detail = $null
         try {
-            $events = @(Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=$StartTime; EndTime=$EndTime} -ErrorAction Stop)
+            $events = @(Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=$StartTime; EndTime=$EndTime} -MaxEvents ($MaxEventsPerLog+1) -ErrorAction Stop)
+            if ($events.Count -gt $MaxEventsPerLog) {
+                $state='Limitado'; $detail='Se alcanzo MaxEventsPerLog; consulta parcial (eventos mas recientes).'
+                $events=@($events | Select-Object -First $MaxEventsPerLog)
+            }
             foreach ($evt in $events) {
                 try {
-                    [xml]$xml = $evt.ToXml()
+                    $xml = ConvertFrom-WAEventXml -Text $evt.ToXml()
                     $evidenceMatches = New-Object System.Collections.Generic.List[string]
                     $execution = $xml.SelectSingleNode('/*[local-name()="Event"]/*[local-name()="System"]/*[local-name()="Execution"]')
                     if ($TargetPid -gt 0 -and $null -ne $execution -and $execution.GetAttribute('ProcessID') -eq [string]$TargetPid) {
@@ -456,7 +551,7 @@ function Get-WAEvents {
                     if ($evidenceMatches.Count -gt 0) {
                         $count++
                         $message = [string]$evt.Message
-                        $summary = $message -replace '\s+',' '
+                        $summary = ConvertTo-WADisplayText ($message -replace '\s+',' ')
                         [pscustomobject]@{
                             TimeCreated=$evt.TimeCreated; LogName=$evt.LogName; Id=$evt.Id; RecordId=$evt.RecordId
                             MatchedField=($evidenceMatches -join ', ')
@@ -476,7 +571,7 @@ function Get-WAEvents {
         if ($null -ne $QueryStatus) {
             $QueryStatus.Add([pscustomobject]@{LogName=$log; State=$state; MatchedCount=$count; Detail=$detail; CheckedAt=(Get-Date).ToString('o')})
         }
-        if ($state -eq 'NoDisponible' -or $state -eq 'Parcial') { Write-Warning ("{0}: {1}. {2}" -f $log,$state,$detail) }
+        if ($state -in @('NoDisponible','Parcial','Limitado')) { Write-Warning (ConvertTo-WADisplayText ("{0}: {1}. {2}" -f $log,$state,$detail)) }
     }
 }
 
@@ -490,12 +585,13 @@ function Start-WAEventCapture {
         [Parameter(Mandatory)][datetime]$EndTime,
         [Parameter(Mandatory)][string]$Directory,
         [ValidateRange(1,300)][int]$PollSeconds = 5,
+        [ValidateRange(1,100000)][int]$MaxEventsPerLog=10000,
         [hashtable]$VirusTotalContext,
         [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational')
     )
     if (($TargetPid -eq 0 -and -not $ProcessName) -or ($TargetPid -gt 0 -and $ProcessName)) { throw 'Indica un solo selector: PID o nombre.' }
     if ($EndTime -le $StartTime -or $EndTime -le (Get-Date)) { throw 'La captura necesita un fin futuro posterior al inicio.' }
-    [void](New-Item -ItemType Directory -Path $Directory -Force)
+    $Directory=Initialize-WAReportDirectory -Directory $Directory
     $runId = 'capture-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8)
     $journal = Join-Path $Directory ($runId + '.jsonl')
     $manifest = Join-Path $Directory ($runId + '.json')
@@ -504,7 +600,7 @@ function Start-WAEventCapture {
     $processNodes = @{}
     $fileEvidenceCache = @{}
     $links = New-Object 'System.Collections.Generic.List[object]'
-    [IO.File]::WriteAllText($journal, '', (New-Object Text.UTF8Encoding($false)))
+    foreach ($output in @($journal,$manifest,$treePath,$processPath)) {[void](New-WAEvidenceFile -Path $output)}
     $seen = New-Object 'System.Collections.Generic.HashSet[string]'
     $statuses = New-Object 'System.Collections.Generic.List[object]'
     $metadata = [pscustomobject]@{
@@ -531,7 +627,7 @@ function Start-WAEventCapture {
             if ($lower -lt $StartTime) { $lower = $StartTime }
             if ($upper -gt $lower) {
                 $statuses.Clear()
-                $query = @{TargetPid=$TargetPid; ProcessName=$ProcessName; StartTime=$lower; EndTime=$upper; Logs=$Logs; QueryStatus=$statuses}
+                $query = @{TargetPid=$TargetPid; ProcessName=$ProcessName; StartTime=$lower; EndTime=$upper; Logs=$Logs; QueryStatus=$statuses;MaxEventsPerLog=$MaxEventsPerLog}
                 Get-WAEvents @query | ForEach-Object {
                     $key = '{0}|{1}|{2}' -f $_.LogName,$_.RecordId,$_.TimeCreated.ToString('o')
                     if ($seen.Add($key)) {
@@ -543,7 +639,7 @@ function Start-WAEventCapture {
                 $cursor = $upper
                 $metadata.LastQueryEnd = $upper.ToString('o')
                 $metadata.Sources = @($statuses.ToArray())
-                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
+                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial','Limitado')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
                 $metadata.UpdatedAt = (Get-Date).ToString('o')
                 $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
             }
@@ -554,7 +650,7 @@ function Start-WAEventCapture {
         # Ultima lectura con margen para escrituras de eventos ligeramente demoradas.
         Start-Sleep -Seconds 2
         $statuses.Clear()
-        Get-WAEvents -TargetPid $TargetPid -ProcessName $ProcessName -StartTime $StartTime -EndTime $EndTime -Logs $Logs -QueryStatus $statuses | ForEach-Object {
+        Get-WAEvents -TargetPid $TargetPid -ProcessName $ProcessName -StartTime $StartTime -EndTime $EndTime -Logs $Logs -QueryStatus $statuses -MaxEventsPerLog $MaxEventsPerLog | ForEach-Object {
             $key = '{0}|{1}|{2}' -f $_.LogName,$_.RecordId,$_.TimeCreated.ToString('o')
             if ($seen.Add($key)) {
                 $_ | ConvertTo-Json -Depth 8 -Compress | Add-Content -LiteralPath $journal -Encoding UTF8
@@ -563,7 +659,7 @@ function Start-WAEventCapture {
             }
         }
         $metadata.Sources = @($statuses.ToArray())
-                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
+                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial','Limitado')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
         $metadata.State = if ($metadata.SourceIssues.Count -gt 0 -or $metadata.ProcessIssues.Count -gt 0) { 'FinalizadaConLimitaciones' } else { 'Finalizada' }
         if ($null -ne $VirusTotalContext) {
             Write-Host 'Captura local terminada. Consultando reputacion opcional por hashes unicos; puede demorar por limites de la API.'
@@ -627,7 +723,8 @@ function Get-WADirectoryComputers {
         [ValidateSet('Kerberos','Negotiate')][string]$Authentication='Kerberos',
         [ValidateRange(1,300)][int]$TimeoutSeconds=30,
         [ValidateRange(1,1000)][int]$PageSize=500,
-        [ValidateRange(1,100000)][int]$MaxComputers=10000
+        [ValidateRange(1,100000)][int]$MaxComputers=10000,
+        [ValidateRange(1,10000)][int]$MaxPages=1000
     )
     if ([Uri]::CheckHostName($Server) -ne [UriHostNameType]::Dns -or $Server -match '[/\\:\s]') { throw 'Usa el nombre DNS del dominio o DC, por ejemplo dc01.ad.example.com; sin URL, IP ni puerto.' }
     $escaped=ConvertTo-WALdapFilterValue -Value $NameFilter -AllowWildcard
@@ -679,7 +776,10 @@ function Get-WADirectoryComputers {
         $page.IsCritical=$true
         [void]$request.Controls.Add($page)
         $cookies=New-Object 'System.Collections.Generic.HashSet[string]'
+        $pageCount=0
         do {
+            $pageCount++
+            if ($pageCount -gt $MaxPages) {throw 'WinAudit LDAP: se alcanzo MaxPages; consulta interrumpida.'}
             $response=Send-WALdapRequest -Connection $connection -Request $request
             foreach ($entry in $response.Entries) {
                 if ($items.Count -ge $MaxComputers) {$truncated=$true;break}
@@ -754,7 +854,13 @@ function Read-EventWindow([switch]$Capture) {
 }
 function Show-Result($Data) {
     if ($null -eq $Data -or @($Data).Count -eq 0) { Write-Host 'Sin coincidencias. Revisa tambien la disponibilidad de los registros.' -ForegroundColor Yellow; return }
-    $Data | Format-Table -AutoSize | Out-Host
+    $Data | ForEach-Object {
+        $safe=[ordered]@{}
+        foreach ($property in $_.PSObject.Properties) {
+            $safe[$property.Name]=if ($property.Value -is [string]) {ConvertTo-WADisplayText $property.Value} else {$property.Value}
+        }
+        [pscustomobject]$safe
+    } | Format-Table -AutoSize | Out-Host
 }
 function Save-Report($Data, [string]$Name) {
     if ($null -eq $Data) { return }
@@ -779,7 +885,7 @@ function Invoke-LocalProcesses([string]$Name) {
 function Invoke-EventInvestigation {
     param([int]$TargetPid = 0,[string]$Name,[datetime]$From,[datetime]$Until,[switch]$Capture)
     if ($Capture) {
-        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds -VirusTotalContext $(if ($script:vtAutomatic) {$script:vtContext} else {$null}))
+        [void](Start-WAEventCapture -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -Directory $ReportDirectory -PollSeconds $PollSeconds -MaxEventsPerLog $MaxEventsPerLog -VirusTotalContext $(if ($script:vtAutomatic) {$script:vtContext} else {$null}))
         return
     }
     if ($Until -gt (Get-Date)) { throw 'Para un fin futuro usa -Monitor o la opcion 7 del menu.' }
@@ -791,7 +897,7 @@ function Invoke-EventInvestigation {
         }
     })
     $status = New-Object 'System.Collections.Generic.List[object]'
-    $events = @(Get-WAEvents -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -QueryStatus $status)
+    $events = @(Get-WAEvents -TargetPid $TargetPid -ProcessName $Name -StartTime $From -EndTime $Until -QueryStatus $status -MaxEventsPerLog $MaxEventsPerLog)
     Show-Result ($events | Select-Object -First 35 TimeCreated,LogName,Id,MatchedField,Summary)
     Show-Result $status.ToArray()
     Save-Report ([pscustomobject]@{
@@ -856,14 +962,15 @@ function Invoke-FileEvidenceMenu {
     $algorithm = switch ($option) { '1' {'SHA256'} '2' {'MD5'} '3' {'Both'} default {throw 'Opcion invalida.'} }
     $evidence = Get-WAFileEvidence -Path $path -HashAlgorithm $algorithm
     Add-OptionalReputation -Evidence $evidence
-    $evidence | Format-List | Out-Host
+    Show-Result $evidence
     Save-Report $evidence 'file-evidence'
 }
 function Add-OptionalReputation {
     param([Parameter(Mandatory)]$Evidence)
     if (-not $script:vtAutomatic -or $null -eq $script:vtContext) { return }
     try {
-        $sha=(Get-FileHash -LiteralPath $Evidence.Path -Algorithm SHA256 -ErrorAction Stop).Hash
+        $localPath=Resolve-WALocalEvidencePath -Path $Evidence.Path
+        $sha=(Get-FileHash -LiteralPath $localPath -Algorithm SHA256 -ErrorAction Stop).Hash
         $report=Get-WAVirusTotalReport -SHA256 $sha -Context $script:vtContext
     } catch { $report=[pscustomobject]@{State='EvidenciaNoDisponible'; Detail='No se pudo leer el hash; no se envio la consulta.'} }
     $Evidence | Add-Member -NotePropertyName VirusTotal -NotePropertyValue $report -Force
@@ -889,7 +996,7 @@ function Invoke-VirusTotalMenu {
                 if ($null -eq $script:vtContext) {Write-Host 'Primero carga tu clave con opcion 1.'; continue}
                 $hash=Read-Host 'SHA-256 a enviar a VirusTotal'
                 $report=Get-WAVirusTotalReport -SHA256 $hash -Context $script:vtContext
-                $report | Format-List | Out-Host
+                Show-Result $report
                 Save-Report $report 'virustotal-reputation'
             }
             '3' {
@@ -902,6 +1009,7 @@ function Invoke-VirusTotalMenu {
         }
     }
 }
+Assert-WASupportedRuntime
 $script:vtContext=$null
 $script:vtAutomatic=$false
 if ($VirusTotal) {
@@ -928,7 +1036,7 @@ if ($FilePath) {
     if ($FindProcess -or $PIDToAudit -gt 0 -or $Monitor -or $ComputerName -or $FullScan -or $hasWindow) { throw '-FilePath solo admite -HashAlgorithm y -ReportDirectory.' }
     $evidence = Get-WAFileEvidence -Path $FilePath -HashAlgorithm $HashAlgorithm
     Add-OptionalReputation -Evidence $evidence
-    $evidence | Format-List | Out-Host
+    Show-Result $evidence
     Save-Report $evidence 'file-evidence'
     return
 }
@@ -978,6 +1086,6 @@ while ($true) {
             '0' { return }
             default { Write-Host 'Opcion invalida.' -ForegroundColor Yellow }
         }
-    } catch { Write-Host ("Error: {0}" -f $_.Exception.Message) -ForegroundColor Red }
+    } catch { Write-Host (ConvertTo-WADisplayText ("Error: {0}" -f $_.Exception.Message)) -ForegroundColor Red }
     Pause-Menu
 }

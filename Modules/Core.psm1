@@ -168,6 +168,15 @@ function Export-WACaptureTree {
         $signature = if ($Node.PSObject.Properties['SignatureStatus'] -and $Node.SignatureStatus) { Safe-Label $Node.SignatureStatus } else { 'NoDisponible' }
         $signer = if ($Node.PSObject.Properties['Signer'] -and $Node.Signer) { Safe-Label $Node.Signer } else { 'NoDisponible' }
         $lines.Add(('{0}+-- {1} PID {2} | MD5: {3} | Signature: {4} | Firmante: {5} | creado {6}' -f $Indent,(Safe-Label $Node.Name),$Node.ProcessId,$md5,$signature,$signer,$Node.CreationDate))
+        if ($Node.PSObject.Properties['VirusTotal']) {
+            $vt=$Node.VirusTotal
+            $suffix=' | VT: ' + (Safe-Label $vt.State)
+            if ($vt.State -eq 'Encontrado') {
+                $suffix += ' | maliciosos: {0} | sospechosos: {1} | evaluados: {2} | analisis UTC: {3}' -f $vt.Malicious,$vt.Suspicious,$vt.EnginesWithVerdict,$vt.LastAnalysisUtc
+            }
+            $lines[$lines.Count-1] += $suffix
+            if ($vt.PSObject.Properties['ReportUrl']) { $lines.Add($Indent + '    VT informe: ' + (Safe-Label $vt.ReportUrl)) }
+        }
         foreach ($field in @('MD5Error','SignatureError')) {
             if ($Node.PSObject.Properties[$field] -and $Node.$field) { $lines.Add(('{0}    {1}: {2}' -f $Indent,$field,(Safe-Label $Node.$field))) }
         }

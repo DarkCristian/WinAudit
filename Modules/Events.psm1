@@ -42,11 +42,11 @@ function Get-WAEvents {
                 try {
                     [xml]$xml = $evt.ToXml()
                     $evidenceMatches = New-Object System.Collections.Generic.List[string]
-                    $execution = $xml.SelectSingleNode('/Event/System/Execution')
+                    $execution = $xml.SelectSingleNode('/*[local-name()="Event"]/*[local-name()="System"]/*[local-name()="Execution"]')
                     if ($TargetPid -gt 0 -and $null -ne $execution -and $execution.GetAttribute('ProcessID') -eq [string]$TargetPid) {
                         [void]$evidenceMatches.Add('System.Execution.ProcessID (emisor)')
                     }
-                    foreach ($node in $xml.SelectNodes('/Event/EventData/Data')) {
+                    foreach ($node in $xml.SelectNodes('/*[local-name()="Event"]/*[local-name()="EventData"]/*[local-name()="Data"]')) {
                         $field = $node.GetAttribute('Name')
                         $raw = $node.InnerText
                         if ($TargetPid -gt 0 -and $field -match '^(ProcessId|NewProcessId|ParentProcessId|CreatorProcessId|ClientProcessId|SourceProcessId|TargetProcessId)$') {

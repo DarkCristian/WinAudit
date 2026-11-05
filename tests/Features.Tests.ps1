@@ -53,7 +53,7 @@ Assert-True (@(Get-WAProcesses -Name '*.exe').Count -eq 0) 'La busqueda no debe 
         )
         foreach ($record in $records) {
             if ($script:EventTime -lt $FilterHashtable.StartTime -or $script:EventTime -gt $FilterHashtable.EndTime) { continue }
-            $evt=[pscustomobject]@{TimeCreated=$script:EventTime; LogName=$FilterHashtable.LogName; Id=4688; RecordId=[int]$record[0]; Message='Evento sintetico'; Xml="<Event><System>$($record[1])</System><EventData>$($record[2])</EventData></Event>"}
+            $evt=[pscustomobject]@{TimeCreated=$script:EventTime; LogName=$FilterHashtable.LogName; Id=4688; RecordId=[int]$record[0]; Message='Evento sintetico'; Xml="<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>$($record[1])</System><EventData>$($record[2])</EventData></Event>"}
             $evt | Add-Member -MemberType ScriptMethod -Name ToXml -Value { $this.Xml }
             $evt
         }

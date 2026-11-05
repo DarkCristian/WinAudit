@@ -23,8 +23,9 @@ jobs:
               $parseErrors | Format-List
               throw 'Standalone syntax validation failed.'
           }
+          function global:Clear-Host { }
           function global:Read-Host { param($Prompt) '0' }
-          try { & $path } finally { Remove-Item Function:\Read-Host }
+          try { & $path } finally { Remove-Item Function:\Read-Host; Remove-Item Function:\Clear-Host }
           Write-Host 'Syntax and menu exit passed.'
       - name: PowerShell 7 syntax and menu
         shell: pwsh
@@ -37,6 +38,7 @@ jobs:
               $parseErrors | Format-List
               throw 'Standalone syntax validation failed.'
           }
+          function global:Clear-Host { }
           function global:Read-Host { param($Prompt) '0' }
-          try { & $path } finally { Remove-Item Function:\Read-Host }
+          try { & $path } finally { Remove-Item Function:\Read-Host; Remove-Item Function:\Clear-Host }
           Write-Host 'Syntax and menu exit passed.'

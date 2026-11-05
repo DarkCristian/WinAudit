@@ -27,7 +27,8 @@ function Get-WAEvents {
         [datetime]$StartTime = (Get-Date).AddHours(-24),
         [datetime]$EndTime = (Get-Date),
         [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational'),
-        [System.Collections.Generic.List[object]]$QueryStatus
+        [System.Collections.Generic.List[object]]$QueryStatus,
+        [ValidateRange(1,100000)][int]$MaxEventsPerLog=10000
     )
     if ($TargetPid -eq 0 -and [string]::IsNullOrWhiteSpace($ProcessName)) { throw 'Indica un PID o nombre de ejecutable.' }
     if ($TargetPid -gt 0 -and $ProcessName) { throw 'Usa un solo selector: PID o nombre.' }
@@ -37,10 +38,14 @@ function Get-WAEvents {
         $state = 'Consultado'
         $detail = $null
         try {
-            $events = @(Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=$StartTime; EndTime=$EndTime} -ErrorAction Stop)
+            $events = @(Get-WinEvent -FilterHashtable @{LogName=$log; StartTime=$StartTime; EndTime=$EndTime} -MaxEvents ($MaxEventsPerLog+1) -ErrorAction Stop)
+            if ($events.Count -gt $MaxEventsPerLog) {
+                $state='Limitado'; $detail='Se alcanzo MaxEventsPerLog; consulta parcial (eventos mas recientes).'
+                $events=@($events | Select-Object -First $MaxEventsPerLog)
+            }
             foreach ($evt in $events) {
                 try {
-                    [xml]$xml = $evt.ToXml()
+                    $xml = ConvertFrom-WAEventXml -Text $evt.ToXml()
                     $evidenceMatches = New-Object System.Collections.Generic.List[string]
                     $execution = $xml.SelectSingleNode('/*[local-name()="Event"]/*[local-name()="System"]/*[local-name()="Execution"]')
                     if ($TargetPid -gt 0 -and $null -ne $execution -and $execution.GetAttribute('ProcessID') -eq [string]$TargetPid) {
@@ -63,7 +68,7 @@ function Get-WAEvents {
                     if ($evidenceMatches.Count -gt 0) {
                         $count++
                         $message = [string]$evt.Message
-                        $summary = $message -replace '\s+',' '
+                        $summary = ConvertTo-WADisplayText ($message -replace '\s+',' ')
                         [pscustomobject]@{
                             TimeCreated=$evt.TimeCreated; LogName=$evt.LogName; Id=$evt.Id; RecordId=$evt.RecordId
                             MatchedField=($evidenceMatches -join ', ')
@@ -83,7 +88,7 @@ function Get-WAEvents {
         if ($null -ne $QueryStatus) {
             $QueryStatus.Add([pscustomobject]@{LogName=$log; State=$state; MatchedCount=$count; Detail=$detail; CheckedAt=(Get-Date).ToString('o')})
         }
-        if ($state -eq 'NoDisponible' -or $state -eq 'Parcial') { Write-Warning ("{0}: {1}. {2}" -f $log,$state,$detail) }
+        if ($state -in @('NoDisponible','Parcial','Limitado')) { Write-Warning (ConvertTo-WADisplayText ("{0}: {1}. {2}" -f $log,$state,$detail)) }
     }
 }
 
@@ -97,12 +102,13 @@ function Start-WAEventCapture {
         [Parameter(Mandatory)][datetime]$EndTime,
         [Parameter(Mandatory)][string]$Directory,
         [ValidateRange(1,300)][int]$PollSeconds = 5,
+        [ValidateRange(1,100000)][int]$MaxEventsPerLog=10000,
         [hashtable]$VirusTotalContext,
         [string[]]$Logs = @('Security','Microsoft-Windows-PowerShell/Operational','Microsoft-Windows-Sysmon/Operational')
     )
     if (($TargetPid -eq 0 -and -not $ProcessName) -or ($TargetPid -gt 0 -and $ProcessName)) { throw 'Indica un solo selector: PID o nombre.' }
     if ($EndTime -le $StartTime -or $EndTime -le (Get-Date)) { throw 'La captura necesita un fin futuro posterior al inicio.' }
-    [void](New-Item -ItemType Directory -Path $Directory -Force)
+    $Directory=Initialize-WAReportDirectory -Directory $Directory
     $runId = 'capture-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8)
     $journal = Join-Path $Directory ($runId + '.jsonl')
     $manifest = Join-Path $Directory ($runId + '.json')
@@ -111,7 +117,7 @@ function Start-WAEventCapture {
     $processNodes = @{}
     $fileEvidenceCache = @{}
     $links = New-Object 'System.Collections.Generic.List[object]'
-    [IO.File]::WriteAllText($journal, '', (New-Object Text.UTF8Encoding($false)))
+    foreach ($output in @($journal,$manifest,$treePath,$processPath)) {[void](New-WAEvidenceFile -Path $output)}
     $seen = New-Object 'System.Collections.Generic.HashSet[string]'
     $statuses = New-Object 'System.Collections.Generic.List[object]'
     $metadata = [pscustomobject]@{
@@ -138,7 +144,7 @@ function Start-WAEventCapture {
             if ($lower -lt $StartTime) { $lower = $StartTime }
             if ($upper -gt $lower) {
                 $statuses.Clear()
-                $query = @{TargetPid=$TargetPid; ProcessName=$ProcessName; StartTime=$lower; EndTime=$upper; Logs=$Logs; QueryStatus=$statuses}
+                $query = @{TargetPid=$TargetPid; ProcessName=$ProcessName; StartTime=$lower; EndTime=$upper; Logs=$Logs; QueryStatus=$statuses;MaxEventsPerLog=$MaxEventsPerLog}
                 Get-WAEvents @query | ForEach-Object {
                     $key = '{0}|{1}|{2}' -f $_.LogName,$_.RecordId,$_.TimeCreated.ToString('o')
                     if ($seen.Add($key)) {
@@ -150,7 +156,7 @@ function Start-WAEventCapture {
                 $cursor = $upper
                 $metadata.LastQueryEnd = $upper.ToString('o')
                 $metadata.Sources = @($statuses.ToArray())
-                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
+                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial','Limitado')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
                 $metadata.UpdatedAt = (Get-Date).ToString('o')
                 $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8
             }
@@ -161,7 +167,7 @@ function Start-WAEventCapture {
         # Ultima lectura con margen para escrituras de eventos ligeramente demoradas.
         Start-Sleep -Seconds 2
         $statuses.Clear()
-        Get-WAEvents -TargetPid $TargetPid -ProcessName $ProcessName -StartTime $StartTime -EndTime $EndTime -Logs $Logs -QueryStatus $statuses | ForEach-Object {
+        Get-WAEvents -TargetPid $TargetPid -ProcessName $ProcessName -StartTime $StartTime -EndTime $EndTime -Logs $Logs -QueryStatus $statuses -MaxEventsPerLog $MaxEventsPerLog | ForEach-Object {
             $key = '{0}|{1}|{2}' -f $_.LogName,$_.RecordId,$_.TimeCreated.ToString('o')
             if ($seen.Add($key)) {
                 $_ | ConvertTo-Json -Depth 8 -Compress | Add-Content -LiteralPath $journal -Encoding UTF8
@@ -170,7 +176,7 @@ function Start-WAEventCapture {
             }
         }
         $metadata.Sources = @($statuses.ToArray())
-                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
+                $metadata.SourceIssues = @(@($metadata.SourceIssues) + @($statuses | Where-Object {$_.State -in @('NoDisponible','Parcial','Limitado')} | Select-Object LogName,State,Detail) | Sort-Object LogName,State,Detail -Unique)
         $metadata.State = if ($metadata.SourceIssues.Count -gt 0 -or $metadata.ProcessIssues.Count -gt 0) { 'FinalizadaConLimitaciones' } else { 'Finalizada' }
         if ($null -ne $VirusTotalContext) {
             Write-Host 'Captura local terminada. Consultando reputacion opcional por hashes unicos; puede demorar por limites de la API.'

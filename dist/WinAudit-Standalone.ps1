@@ -71,9 +71,53 @@ function Export-WAReport {
     return $file
 }
 
+
+function Get-WATreeFileEvidence {
+    [CmdletBinding()]
+    param([string]$Path,[hashtable]$Cache=@{})
+    $evidence = [pscustomobject]@{
+        MD5=$null; SignatureStatus='NoDisponible'; Signer=$null
+        FileEvidenceAt=(Get-Date).ToString('o'); MD5Error=$null; SignatureError=$null
+    }
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        $evidence.MD5Error='Ruta de ejecutable no disponible.'
+        $evidence.SignatureError=$evidence.MD5Error
+        return $evidence
+    }
+    try {
+        $before = Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($before.PSIsContainer) { throw 'La ruta no corresponde a un archivo.' }
+        $length = $before.Length
+        $writeTicks = $before.LastWriteTimeUtc.Ticks
+        $cacheKey = '{0}|{1}|{2}' -f $before.FullName,$length,$writeTicks
+        if ($Cache.ContainsKey($cacheKey)) { return $Cache[$cacheKey] }
+    } catch {
+        $evidence.MD5Error=$_.Exception.Message
+        $evidence.SignatureError=$_.Exception.Message
+        return $evidence
+    }
+    try { $evidence.MD5=(Get-FileHash -LiteralPath $Path -Algorithm MD5 -ErrorAction Stop).Hash }
+    catch { $evidence.MD5Error=$_.Exception.Message }
+    try {
+        $signature=Get-AuthenticodeSignature -LiteralPath $Path -ErrorAction Stop
+        $evidence.SignatureStatus=[string]$signature.Status
+        if ($signature.SignerCertificate) { $evidence.Signer=$signature.SignerCertificate.Subject }
+    } catch { $evidence.SignatureError=$_.Exception.Message }
+    try {
+        $after=Get-Item -LiteralPath $Path -ErrorAction Stop
+        if ($after.Length -ne $length -or $after.LastWriteTimeUtc.Ticks -ne $writeTicks) { throw 'El archivo cambio durante la lectura de evidencia.' }
+    } catch {
+        $evidence.MD5=$null; $evidence.SignatureStatus='NoDisponible'; $evidence.Signer=$null
+        $evidence.MD5Error=$_.Exception.Message; $evidence.SignatureError=$_.Exception.Message
+    }
+    # Reutiliza solo resultados completos; los errores se pueden reintentar con otra instancia.
+    if (-not $evidence.MD5Error -and -not $evidence.SignatureError) { $Cache[$cacheKey]=$evidence }
+    return $evidence
+}
+
 function Update-WAObservedProcesses {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][hashtable]$Nodes,[int]$TargetPid=0,[string]$ProcessName)
+    param([Parameter(Mandatory)][hashtable]$Nodes,[int]$TargetPid=0,[string]$ProcessName,[hashtable]$FileEvidenceCache=@{})
     $at = Get-Date
     $current = @(Get-WAProcesses)
     $byPid = @{}
@@ -109,9 +153,12 @@ function Update-WAObservedProcesses {
         }
         if ($Nodes.ContainsKey($key)) { $Nodes[$key].LastSeen=$at.ToString('o'); continue }
         $root = ($TargetPid -gt 0 -and $proc.ProcessId -eq $TargetPid) -or ($ProcessName -and $proc.Name -ieq $ProcessName)
+        $fileEvidence=Get-WATreeFileEvidence -Path $proc.ExecutablePath -Cache $FileEvidenceCache
         $Nodes[$key] = [pscustomobject]@{
             Key=$key; Name=$proc.Name; ProcessId=$proc.ProcessId; ParentProcessId=$proc.ParentProcessId
             CreationDate=([datetime]$proc.CreationDate).ToString('o'); ParentKey=$parentKey; ParentName=$parentName
+            MD5=$fileEvidence.MD5; SignatureStatus=$fileEvidence.SignatureStatus; Signer=$fileEvidence.Signer
+            FileEvidenceAt=$fileEvidence.FileEvidenceAt; MD5Error=$fileEvidence.MD5Error; SignatureError=$fileEvidence.SignatureError
             IsRoot=[bool]$root; ExecutablePath=$proc.ExecutablePath; FirstSeen=$at.ToString('o'); LastSeen=$at.ToString('o')
             Evidence='Win32_Process: PID, PPID y fecha de creacion en la misma instantanea'
         }
@@ -135,13 +182,20 @@ function ConvertTo-WAProcessLink {
 
 function Export-WACaptureTree {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][hashtable]$Nodes,[Parameter(Mandatory)]$Metadata,[Parameter(Mandatory)][string]$Path,[object[]]$Links=@())
+    param([Parameter(Mandatory)][hashtable]$Nodes,[Parameter(Mandatory)]$Metadata,[Parameter(Mandatory)][string]$Path,[object[]]$Links=@(),[switch]$ShowOnScreen)
     $lines = New-Object 'System.Collections.Generic.List[string]'
     $visited = New-Object 'System.Collections.Generic.HashSet[string]'
-    function Safe-Label($Value) { ([string]$Value) -replace '[\x00-\x1f\x7f]','?' }
+    function Safe-Label($Value) { (([string]$Value) -replace '[\x00-\x1f\x7f]','?') -replace '\|','/' }
     function Add-TreeNode($Node,[string]$Indent,[int]$Depth) {
         if ($Depth -gt 64 -or -not $visited.Add($Node.Key)) { $lines.Add($Indent + '+-- [ciclo o limite de profundidad]'); return }
-        $lines.Add(('{0}+-- {1} PID {2} | creado {3}' -f $Indent,(Safe-Label $Node.Name),$Node.ProcessId,$Node.CreationDate))
+        $md5 = if ($Node.PSObject.Properties['MD5'] -and $Node.MD5) { $Node.MD5 } else { 'NoDisponible' }
+        $signature = if ($Node.PSObject.Properties['SignatureStatus'] -and $Node.SignatureStatus) { Safe-Label $Node.SignatureStatus } else { 'NoDisponible' }
+        $signer = if ($Node.PSObject.Properties['Signer'] -and $Node.Signer) { Safe-Label $Node.Signer } else { 'NoDisponible' }
+        $lines.Add(('{0}+-- {1} PID {2} | MD5: {3} | Signature: {4} | Firmante: {5} | creado {6}' -f $Indent,(Safe-Label $Node.Name),$Node.ProcessId,$md5,$signature,$signer,$Node.CreationDate))
+        foreach ($field in @('MD5Error','SignatureError')) {
+            if ($Node.PSObject.Properties[$field] -and $Node.$field) { $lines.Add(('{0}    {1}: {2}' -f $Indent,$field,(Safe-Label $Node.$field))) }
+        }
+        if ($Node.PSObject.Properties['FileEvidenceAt'] -and $Node.FileEvidenceAt) { $lines.Add(('{0}    Archivo leido: {1}' -f $Indent,$Node.FileEvidenceAt)) }
         foreach ($child in @($Nodes.Values | Where-Object {$_.ParentKey -eq $Node.Key} | Sort-Object CreationDate,ProcessId)) { Add-TreeNode $child ($Indent + '    ') ($Depth+1) }
     }
     $lines.Add('WinAudit - Informe de monitoreo y relaciones de procesos')
@@ -174,8 +228,11 @@ function Export-WACaptureTree {
     $lines.Add('LIMITES: las instantaneas pueden perder procesos breves. No demuestra ausencia de actividad.')
     $lines.Add('Los hijos se enlazan solo con un padre observado y fecha de creacion compatible. Los PID se reutilizan.')
     $lines.Add('Los vinculos de eventos no implican parentesco ni actividad maliciosa. No se inventan otros procesos vinculados.')
+    $lines.Add('MD5 y Signature describen el archivo accesible al observar la instancia, no la memoria ni su contenido historico.')
+    $lines.Add('Signature conserva el estado Authenticode: Valid no garantiza que un proceso sea benigno; NotSigned indica ausencia de firma.')
     $lines.Add('Los hashes identifican archivos en disco al leerlos; MD5 no sirve para demostrar integridad frente a manipulacion intencional.')
     [IO.File]::WriteAllLines($Path,$lines.ToArray(),(New-Object Text.UTF8Encoding($true)))
+    if ($ShowOnScreen) { foreach ($line in $lines) { Write-Host $line } }
     return $Path
 }
 
@@ -288,6 +345,7 @@ function Start-WAEventCapture {
     $treePath = Join-Path $Directory ($runId + '-tree.txt')
     $processPath = Join-Path $Directory ($runId + '-processes.json')
     $processNodes = @{}
+    $fileEvidenceCache = @{}
     $links = New-Object 'System.Collections.Generic.List[object]'
     [IO.File]::WriteAllText($journal, '', (New-Object Text.UTF8Encoding($false)))
     $seen = New-Object 'System.Collections.Generic.HashSet[string]'
@@ -306,7 +364,7 @@ function Start-WAEventCapture {
         while ((Get-Date) -lt $StartTime) { Start-Sleep -Seconds 1 }
         $metadata.State = 'Capturando'
         while ($true) {
-            try { Update-WAObservedProcesses -Nodes $processNodes -TargetPid $TargetPid -ProcessName $ProcessName }
+            try { Update-WAObservedProcesses -Nodes $processNodes -TargetPid $TargetPid -ProcessName $ProcessName -FileEvidenceCache $fileEvidenceCache }
             catch { $metadata.ProcessIssues = @(@($metadata.ProcessIssues) + @($_.Exception.Message) | Select-Object -Unique) }
             $metadata.ObservedProcessCount = $processNodes.Count
             ConvertTo-Json -InputObject @($processNodes.Values) -Depth 8 | Set-Content -LiteralPath $processPath -Encoding UTF8
@@ -354,7 +412,7 @@ function Start-WAEventCapture {
         if ($metadata.State -in @('Esperando','Capturando')) { $metadata.State = 'Interrumpida' }
         $metadata.ObservedProcessCount = $processNodes.Count
         ConvertTo-Json -InputObject @($processNodes.Values) -Depth 8 | Set-Content -LiteralPath $processPath -Encoding UTF8
-        [void](Export-WACaptureTree -Nodes $processNodes -Metadata $metadata -Path $treePath -Links $links.ToArray())
+        [void](Export-WACaptureTree -Nodes $processNodes -Metadata $metadata -Path $treePath -Links $links.ToArray() -ShowOnScreen)
         $metadata.FinishedAt = (Get-Date).ToString('o')
         $metadata.UpdatedAt = $metadata.FinishedAt
         $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifest -Encoding UTF8

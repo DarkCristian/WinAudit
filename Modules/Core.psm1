@@ -224,4 +224,23 @@ function Export-WACaptureTree {
     if ($ShowOnScreen) { foreach ($line in $lines) { Write-Host $line } }
     return $Path
 }
-Export-ModuleMember -Function Get-WAProcesses,Get-WAFileEvidence,Export-WAReport,Update-WAObservedProcesses,ConvertTo-WAProcessLink,Export-WACaptureTree
+
+function Get-WARemoteProcesses {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$ComputerName,
+        [pscredential]$Credential,
+        [switch]$UseSSL,
+        [ValidateRange(0,65535)][int]$Port=0,
+        [ValidateSet('Kerberos','Negotiate')][string]$Authentication='Kerberos'
+    )
+    if ([Uri]::CheckHostName($ComputerName) -ne [UriHostNameType]::Dns -or $ComputerName -match '[/\\:\s]') {throw 'WinRM requiere un nombre DNS de equipo, por ejemplo pc001.ad.example.com.'}
+    $query=@{ComputerName=$ComputerName;Authentication=$Authentication;ErrorAction='Stop';ScriptBlock={
+        Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,CreationDate,ExecutablePath,CommandLine
+    }}
+    if ($null -ne $Credential) {$query.Credential=$Credential}
+    if ($UseSSL) {$query.UseSSL=$true}
+    if ($Port -gt 0) {$query.Port=$Port}
+    Invoke-Command @query
+}
+Export-ModuleMember -Function Get-WAProcesses,Get-WAFileEvidence,Export-WAReport,Update-WAObservedProcesses,ConvertTo-WAProcessLink,Export-WACaptureTree,Get-WARemoteProcesses

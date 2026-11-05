@@ -12,7 +12,7 @@
 
 **WinAudit** es una herramienta de código abierto, desarrollada en PowerShell nativo, para inventariar procesos de Windows, verificar firmas digitales, investigar eventos por PID, consultar procesos remotos mediante acceso autorizado y descubrir equipos registrados en Active Directory.
 
-> **Versión Alpha para pruebas.** El archivo independiente tiene verificadas la sintaxis y la apertura/salida del menú en Windows PowerShell 5.1 y PowerShell 7 mediante [GitHub Actions](https://github.com/DarkCristian/WinAudit/actions/runs/42099606247). Las auditorías reales de procesos, registros, WinRM y AD todavía requieren validación en un entorno Windows autorizado. No debe considerarse una herramienta completa de adquisición forense.
+> **Versión Alpha para pruebas.** El proyecto incluye [pruebas automatizadas](https://github.com/DarkCristian/WinAudit/actions/workflows/validate-standalone.yml) para Windows PowerShell 5.1 y PowerShell 7, con eventos sintéticos, validación de fechas y comprobación del archivo independiente. Las auditorías reales de procesos, registros, WinRM y AD todavía requieren validación en un entorno Windows autorizado. No debe considerarse una herramienta completa de adquisición forense.
 
 ## Funciones
 
@@ -20,8 +20,11 @@
 | --- | --- |
 | Consola ASCII interactiva con menús numéricos | Implementada |
 | Inventario local de procesos, PID, PID padre y líneas de comandos | Implementado |
-| Firma Authenticode y hash SHA-256 del ejecutable de un PID activo seleccionado | Implementados |
-| Correlación de eventos por PID e intervalo horario | Implementación inicial |
+| Firma Authenticode y hashes SHA-256 / MD5 del ejecutable de un PID activo seleccionado | Implementados |
+| Consulta histórica por PID o nombre e intervalo horario | Implementación inicial |
+| Búsqueda exacta de ejecutables activos, con todos sus PID | Implementada |
+| Captura local hasta un horario futuro, con espera y guardado progresivo | Implementada en la sesión actual |
+| Informe TXT de árbol observado y relaciones de procesos | Implementado; limitado a evidencia disponible |
 | Inventario de procesos remotos mediante WinRM | Implementado |
 | Descubrimiento de equipos de AD mediante RSAT | Implementado |
 | Exportación local de informes JSON | Implementada |
@@ -116,13 +119,13 @@ El bootstrapper descarga WinAudit y sus módulos en una carpeta temporal, ejecut
 
 ### Opción 3 — Descargar el archivo PowerShell independiente
 
-Descargá **WinAudit-Standalone.ps1** desde los **Assets** de la [pre-release v0.1.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.1.0-alpha) y ejecutalo:
+Para probar las nuevas funciones de búsqueda y captura, descargá el [archivo independiente actual en main](https://raw.githubusercontent.com/DarkCristian/WinAudit/main/dist/WinAudit-Standalone.ps1) y ejecutalo:
 
 ```powershell
 .\WinAudit-Standalone.ps1
 ```
 
-También podés consultar el [archivo independiente actual en main](dist/WinAudit-Standalone.ps1).
+Podés [revisar su código](dist/WinAudit-Standalone.ps1) antes de ejecutarlo. La [pre-release v0.1.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.1.0-alpha) conserva el asset anterior; no contiene estas nuevas funciones.
 
 Incluye los módulos propios en un solo archivo y no requiere Git. RSAT sigue siendo opcional para descubrir equipos de Active Directory; WinRM sigue siendo necesario para el inventario remoto.
 
@@ -140,18 +143,53 @@ Desde una copia del repositorio:
 
 Si utilizás el archivo independiente, reemplazá `WinAudit.ps1` por `WinAudit-Standalone.ps1`.
 
+## Buscar procesos y consultar o capturar eventos
+
+Búsqueda exacta de todos los PID activos de un ejecutable:
+
+```powershell
+.\WinAudit.ps1 -FindProcess 'example.exe'
+```
+
+Consulta histórica por nombre (también admite `-PIDToAudit 1234`):
+
+```powershell
+.\WinAudit.ps1 -FindProcess 'example.exe' -Start '01-01-2026 10:00:00' -End '01-01-2026 11:00:00'
+```
+
+Captura local desde ahora hasta dentro de diez minutos:
+
+```powershell
+.\WinAudit.ps1 -FindProcess 'example.exe' -Monitor -End ((Get-Date).AddMinutes(10))
+```
+
+Para un inicio futuro, agregá `-Start` con la fecha y hora deseadas. Se admiten `dd-MM-yyyy HH:mm:ss`, `yyyy-MM-dd HH:mm:ss` y objetos `[datetime]`. `-Start` y `-End` son alias de `-StartTime` y `-EndTime`. Se utiliza la hora local del equipo donde corre WinAudit.
+
+**La terminal debe permanecer abierta.** No crea tareas programadas ni servicios. Consulta los registros existentes, guarda eventos progresivamente en JSONL y genera un resumen JSON, evidencia de procesos y un informe TXT con el árbol observado. Los vínculos de eventos se presentan por separado del parentesco. No habilita auditorías de Windows automáticamente. La búsqueda por nombre requiere que el evento registre un campo de ejecutable compatible; no garantiza encontrar toda la actividad de ese programa.
+
+Consultá la [guía de uso](docs/USAGE.md) para conocer los campos, límites, cancelación y disponibilidad de fuentes.
+
+## Verificar un archivo con MD5 o SHA-256
+
+```powershell
+.\WinAudit.ps1 -FilePath 'C:\Example\example.exe' -HashAlgorithm Both
+```
+
+Usá `MD5`, `SHA256` o `Both`; también están disponibles en la opción **8** del menú. El resultado incluye la firma digital y se guarda en JSON. Los hashes describen el archivo actual en disco. MD5 sirve para comparar identificadores; no demuestra integridad frente a manipulación intencional.
+
 ## Menú
 
-Los textos de la consola actualmente están en inglés. Estas son las opciones y su función:
-
-| Opción | Texto de la consola | Acción |
-| --- | --- | --- |
-| 1 | List local processes | Mostrar procesos locales |
-| 2 | Investigate PID + Windows event logs | Investigar un PID y sus coincidencias en registros de Windows |
-| 3 | Remote process inventory (WinRM) | Consultar procesos de un equipo remoto |
-| 4 | Active Directory computer inventory | Descubrir equipos registrados en AD |
-| 5 | Full local process inventory + JSON report | Exportar el inventario local completo de procesos a JSON |
-| 0 | Exit | Salir |
+| Opción | Acción |
+| --- | --- |
+| 1 | Mostrar procesos locales |
+| 2 | Consultar eventos históricos por PID o nombre, con inicio y fin |
+| 3 | Inventario remoto de procesos mediante WinRM |
+| 4 | Inventario de equipos de Active Directory |
+| 5 | Inventario local completo e informe JSON |
+| 6 | Buscar proceso activo por nombre exacto |
+| 7 | Esperar y capturar eventos hasta un horario futuro |
+| 8 | Verificar archivo: firma, SHA-256, MD5 o ambos |
+| 0 | Salir |
 
 ## Alcance y límites de la evidencia
 

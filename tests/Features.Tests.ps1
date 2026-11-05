@@ -14,6 +14,7 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     if ($errors.Count -gt 0) { $errors | Format-List | Out-Host; throw "Error de sintaxis: $($_.FullName)" }
 }
 & (Join-Path $root 'tools/Build-Standalone.ps1') -Check
+Import-Module (Join-Path $root 'Modules/Security.psm1') -Force
 Import-Module (Join-Path $root 'Modules/Events.psm1') -Force
 Import-Module (Join-Path $root 'Modules/Core.psm1') -Force
 $eventsModule = Get-Module Events
@@ -43,7 +44,7 @@ Assert-True (@(Get-WAProcesses -Name '*.exe').Count -eq 0) 'La busqueda no debe 
     $script:EventTime = Get-Date
     function script:Get-WinEvent {
         [CmdletBinding()]
-        param($FilterHashtable)
+        param($FilterHashtable,$MaxEvents)
         if ($FilterHashtable.LogName -eq 'MissingLog') { throw 'Log no disponible (prueba sintetica).' }
         $records = @(
             @('42','<Execution ProcessID="9999"/>','<Data Name="NewProcessId">0x4d2</Data><Data Name="NewProcessName">C:\Example\example.exe</Data>'),

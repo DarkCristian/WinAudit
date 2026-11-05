@@ -111,7 +111,7 @@ Los hashes corresponden al archivo en disco en el momento de leerlo, no a su con
 .\WinAudit.ps1 -ComputerName pc001.ad.example.com
 ```
 
-El inventario remoto usa `Get-Credential` e `Invoke-Command` con WinRM configurado y acceso autorizado. `-ComputerName` no se combina con busqueda, intervalos ni captura en esta version. AD requiere RSAT ActiveDirectory y credenciales autorizadas para el directorio.
+El inventario remoto usa `Get-Credential` e `Invoke-Command` con WinRM configurado y acceso autorizado. `-ComputerName` no se combina con busqueda, intervalos ni captura en esta version. Solo el proveedor RSAT requiere ActiveDirectory. LDAP/LDAPS no requiere RSAT; ambos necesitan acceso autorizado al directorio.
 
 Los informes se guardan por defecto en `%USERPROFILE%\WinAudit-Reports`, fuera del repositorio. Cambia la ruta con `-ReportDirectory`. No publiques informes reales.
 
@@ -159,3 +159,66 @@ Estados posibles incluyen `Encontrado`, `SinAntecedentes`, `SinAnalisisDisponibl
 La captura recopila primero la evidencia local. El enriquecimiento opcional ocurre al finalizar, con el SHA-256 preservado al observar la instancia. Puede demorar: se espacian solicitudes unicas al menos 16 segundos. Hay cache por hash durante la sesion y un tope local de 100 solicitudes por contexto. Un 429 pausa nuevas solicitudes 60 segundos, y un 401/403 requiere reconfigurar. No hay subidas ni reanalisis automaticos.
 
 Consulta el [modelo de seguridad](SECURITY.md) para conocer el almacenamiento de la clave, los datos enviados y las restricciones del proveedor. El workflow prueba la integracion con respuestas simuladas: no necesita claves reales ni realiza consultas a VirusTotal.
+
+## Descubrimiento de AD por LDAP/LDAPS y consulta WinRM
+
+Esta ampliacion esta en `main` y en su standalone actual; el asset publicado de `v0.3.0-alpha` conserva la version anterior.
+
+LDAP/LDAPS descubre objetos de equipo del directorio. WinRM consulta procesos en el equipo elegido. Un objeto habilitado en AD no prueba que este encendido ni accesible por WinRM.
+
+### Menu
+
+En la opcion **4**:
+
+1. Ingresa el nombre DNS del dominio o DC, por ejemplo `dc01.ad.example.com`.
+2. Elegi **LDAPS** (predeterminado), **LDAP firmado/cifrado** o **RSAT**.
+3. Opcionalmente ingresa una OU como `OU=Workstations,DC=ad,DC=example,DC=com` y un patron de equipo como `PC-*`.
+4. Usa la sesion actual o credenciales explicitas de lectura del directorio.
+5. Revisa la tabla y el informe JSON. Ingresa el numero de un equipo mostrado para consultarlo por WinRM, o deja vacio para terminar con el inventario.
+6. Para WinRM, elegi sesion actual u otras credenciales autorizadas. No se reutiliza automaticamente la credencial de LDAP.
+
+Se muestran hasta 100 filas para seleccion. Si faltan equipos, reduce el filtro o consulta el JSON completo. El limite de descubrimiento es 10000 por defecto; si se alcanza se advierte y se marca `QueryTruncated` para no presentar el resultado como completo.
+
+### Comandos
+
+Descubrir sin RSAT usando la identidad actual:
+
+```powershell
+.\WinAudit.ps1 -DirectoryServer dc01.ad.example.com -DirectoryProtocol LDAPS -DirectoryNameFilter 'PC-*' -EnabledOnly
+```
+
+Con credenciales explicitas y una OU:
+
+```powershell
+$credDirectorio = Get-Credential
+.\WinAudit.ps1 -DirectoryServer dc01.ad.example.com -DirectoryProtocol LDAP -DirectoryCredential $credDirectorio -SearchBase 'OU=Workstations,DC=ad,DC=example,DC=com'
+```
+
+Con el modulo oficial de RSAT instalado:
+
+```powershell
+.\WinAudit.ps1 -DirectoryServer dc01.ad.example.com -DirectoryProtocol RSAT
+```
+
+Auditar un host conocido o elegido del inventario:
+
+```powershell
+$credRemota = Get-Credential
+.\WinAudit.ps1 -ComputerName pc001.ad.example.com -RemoteCredential $credRemota
+.\WinAudit.ps1 -ComputerName pc001.ad.example.com -RemoteCredential $credRemota -WinRMUseSSL -WinRMPort 5986
+```
+
+`-DirectoryServer` realiza inventario solamente y no se combina con `-ComputerName`. En el menu se ofrece el paso de seleccion a WinRM. Desde comandos, usa los dos modos por separado. `-ComputerName` sigue siendo independiente de LDAP y RSAT.
+
+### Conexion y autenticacion
+
+- **LDAPS:** puerto 636 por defecto y validacion normal del certificado por Windows. No hay opcion para omitir el certificado ni downgrade automatico a LDAP.
+- **LDAP:** puerto 389 por defecto; SASL con firma y sellado de sesion (`Signing` y `Sealing`). No es un simple bind sin proteccion ni StartTLS.
+- **Autenticacion LDAP:** Kerberos por defecto. `-DirectoryAuthentication Negotiate` es una eleccion explicita, sujeta a las politicas del entorno. No se admite Basic ni Anonymous.
+- **WinRM:** Kerberos por defecto. `-WinRMAuthentication Negotiate` y `-WinRMUseSSL` son opciones explicitas. No cambia TrustedHosts, firewall, certificados ni politicas.
+- **Puertos alternativos:** `-DirectoryPort` y `-WinRMPort`. No se aceptan URLs, direcciones IP ni puertos incrustados en el nombre DNS.
+- **Sin RSAT:** LDAP/LDAPS usa `System.DirectoryServices.Protocols` del runtime de Windows; no descarga librerias ni instala dependencias. Si el runtime no lo ofrece, informa el motivo. Solo la opcion RSAT requiere ActiveDirectory.
+
+El descubrimiento usa paginacion. Sin SearchBase consulta RootDSE y utiliza `defaultNamingContext`; no recorre automaticamente otros dominios del bosque. Los referrals estan desactivados para no redirigir la conexion autenticada a otro servidor. Los patrones permiten `*`, pero se escapan caracteres de control de filtros LDAP. LastLogonDate procede de lastLogonTimestamp y es aproximada; no es una prueba de conectividad.
+
+Los fallos de bind, TLS, permisos o paginacion finalizan la consulta y liberan la conexion. Las contrasenas no se escriben en informes. Las pruebas del workflow simulan LDAP/LDAPS/RSAT/WinRM: sigue pendiente validar contra un DC y un host Windows autorizados.

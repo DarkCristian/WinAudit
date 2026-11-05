@@ -22,5 +22,5 @@ if ($Check) {
     if ($actual -cne $content) { throw 'El standalone no coincide con los modulos. Ejecuta tools/Build-Standalone.ps1.' }
 } else {
     [void](New-Item -ItemType Directory -Path (Split-Path -Parent $output) -Force)
-    [IO.File]::WriteAllText($output,$content,(New-Object Text.UTF8Encoding($true)))
+    [IO.File]::WriteAllText($output,$content,(New-Object Text.UTF8Encoding($false)))
 }

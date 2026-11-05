@@ -44,7 +44,8 @@ function Get-WADirectoryComputers {
         [ValidateSet('Kerberos','Negotiate')][string]$Authentication='Kerberos',
         [ValidateRange(1,300)][int]$TimeoutSeconds=30,
         [ValidateRange(1,1000)][int]$PageSize=500,
-        [ValidateRange(1,100000)][int]$MaxComputers=10000
+        [ValidateRange(1,100000)][int]$MaxComputers=10000,
+        [ValidateRange(1,10000)][int]$MaxPages=1000
     )
     if ([Uri]::CheckHostName($Server) -ne [UriHostNameType]::Dns -or $Server -match '[/\\:\s]') { throw 'Usa el nombre DNS del dominio o DC, por ejemplo dc01.ad.example.com; sin URL, IP ni puerto.' }
     $escaped=ConvertTo-WALdapFilterValue -Value $NameFilter -AllowWildcard
@@ -96,7 +97,10 @@ function Get-WADirectoryComputers {
         $page.IsCritical=$true
         [void]$request.Controls.Add($page)
         $cookies=New-Object 'System.Collections.Generic.HashSet[string]'
+        $pageCount=0
         do {
+            $pageCount++
+            if ($pageCount -gt $MaxPages) {throw 'WinAudit LDAP: se alcanzo MaxPages; consulta interrumpida.'}
             $response=Send-WALdapRequest -Connection $connection -Request $request
             foreach ($entry in $response.Entries) {
                 if ($items.Count -ge $MaxComputers) {$truncated=$true;break}

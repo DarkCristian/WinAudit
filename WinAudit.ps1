@@ -15,6 +15,19 @@ param(
     [switch]$Monitor,
     [switch]$FullScan,
     [string]$ComputerName,
+    [string]$DirectoryServer,
+    [ValidateSet('LDAPS','LDAP','RSAT')][string]$DirectoryProtocol='LDAPS',
+    [string]$SearchBase,
+    [ValidateNotNullOrEmpty()][string]$DirectoryNameFilter='*',
+    [switch]$EnabledOnly,
+    [pscredential]$DirectoryCredential,
+    [ValidateRange(0,65535)][int]$DirectoryPort=0,
+    [ValidateSet('Kerberos','Negotiate')][string]$DirectoryAuthentication='Kerberos',
+    [ValidateRange(1,100000)][int]$MaxComputers=10000,
+    [pscredential]$RemoteCredential,
+    [switch]$WinRMUseSSL,
+    [ValidateRange(0,65535)][int]$WinRMPort=0,
+    [ValidateSet('Kerberos','Negotiate')][string]$WinRMAuthentication='Kerberos',
     [Alias('Start')][object]$StartTime,
     [Alias('End')][object]$EndTime,
     [ValidateRange(1,300)][int]$PollSeconds = 5,
@@ -118,24 +131,45 @@ function Invoke-InteractiveEvents([switch]$Capture) {
     Invoke-EventInvestigation @query -From $window.StartTime -Until $window.EndTime -Capture:$Capture
 }
 function Invoke-RemoteAudit {
-    $hostName = Read-Host 'FQDN del equipo (ej.: pc001.ad.example.com)'
-    if ([string]::IsNullOrWhiteSpace($hostName)) { throw 'El nombre del equipo es obligatorio.' }
-    $credential = Get-Credential -Message 'Credenciales autorizadas para el equipo remoto'
-    $result = Invoke-Command -ComputerName $hostName -Credential $credential -ScriptBlock {
-        Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine
-    } -ErrorAction Stop
+    param([string]$HostName)
+    if (-not $HostName) {$HostName=Read-Host 'FQDN del equipo (ej.: pc001.ad.example.com)'}
+    $mode=Read-Host 'WinRM: [1] sesion actual [2] otras credenciales (lectura AD no garantiza acceso remoto)'
+    $query=@{ComputerName=$HostName;UseSSL=$WinRMUseSSL;Port=$WinRMPort;Authentication=$WinRMAuthentication}
+    if ($mode -eq '2') {$query.Credential=Get-Credential -Message 'Credenciales autorizadas de WinRM'}
+    elseif ($mode -ne '1' -and $mode -ne '') {throw 'Opcion invalida.'}
+    $result=@(Get-WARemoteProcesses @query)
     Show-Result $result
-    Save-Report $result 'remote-processes'
+    Save-Report ([pscustomobject]@{ComputerName=$HostName;Transport='WinRM';UseSSL=[bool]$WinRMUseSSL;Processes=$result}) 'remote-processes'
 }
 function Invoke-DirectoryInventory {
-    $server = Read-Host 'Dominio o DC (ej.: dc01.ad.example.com)'
-    $base = Read-Host 'DN de OU opcional (vacio = contexto predeterminado)'
-    $credential = Get-Credential -Message 'Credenciales autorizadas de lectura del directorio'
-    $query = @{Server=$server; Credential=$credential}
-    if (-not [string]::IsNullOrWhiteSpace($base)) { $query.SearchBase=$base }
-    $items = @(Get-WADirectoryComputers @query)
-    Show-Result ($items | Select-Object -First 100 Name,DNSHostName,OperatingSystem,Enabled)
-    Save-Report $items 'ad-inventory'
+    $server=Read-Host 'Dominio o DC DNS (ej.: dc01.ad.example.com)'
+    $selection=Read-Host 'Descubrimiento: [1] LDAPS (predeterminado) [2] LDAP firmado/cifrado [3] RSAT'
+    $protocol=switch ($selection) {'2' {'LDAP'} '3' {'RSAT'} '1' {'LDAPS'} '' {'LDAPS'} default {throw 'Opcion invalida.'}}
+    $base=Read-Host 'DN de OU opcional (vacio = defaultNamingContext)'
+    $nameFilter=Read-Host 'Nombre o patron (ej.: PC-*; vacio = todos)'
+    if (-not $nameFilter) {$nameFilter='*'}
+    $mode=Read-Host 'Autenticacion: [1] sesion actual [2] otras credenciales de dominio'
+    $query=@{Server=$server;Protocol=$protocol;NameFilter=$nameFilter;MaxComputers=$MaxComputers;Authentication=$DirectoryAuthentication}
+    if ($base) {$query.SearchBase=$base}
+    if ($DirectoryPort -gt 0) {$query.Port=$DirectoryPort}
+    if ($EnabledOnly) {$query.EnabledOnly=$true}
+    if ($mode -eq '2') {$query.Credential=Get-Credential -Message 'Credenciales de lectura del directorio'}
+    elseif ($mode -ne '1' -and $mode -ne '') {throw 'Opcion invalida.'}
+    $items=@(Get-WADirectoryComputers @query)
+    $rows=@(for ($index=0;$index -lt [Math]::Min(100,$items.Count);$index++) {
+        [pscustomobject]@{Numero=($index+1);Name=$items[$index].Name;DNSHostName=$items[$index].DNSHostName;OperatingSystem=$items[$index].OperatingSystem;Enabled=$items[$index].Enabled}
+    })
+    Show-Result $rows
+    Write-Host ('Equipos registrados: {0}. Se muestran hasta 100; WinRM todavia no fue comprobado.' -f $items.Count)
+    Save-Report ([pscustomobject]@{Server=$server;Protocol=$protocol;SearchBase=$base;NameFilter=$nameFilter;Count=$items.Count;Computers=$items}) 'ad-inventory'
+    if ($items.Count -eq 0) {return}
+    $number=Read-Host 'Numero de equipo para consultar por WinRM (vacio = solo inventario)'
+    if ([string]::IsNullOrWhiteSpace($number)) {return}
+    $selected=0
+    if (-not [int]::TryParse($number,[ref]$selected) -or $selected -lt 1 -or $selected -gt $rows.Count) {throw 'Selecciona un numero de la tabla mostrada.'}
+    $target=$items[$selected-1].DNSHostName
+    if ([string]::IsNullOrWhiteSpace($target)) {throw 'El objeto no tiene DNSHostName; no se adivina un destino remoto.'}
+    Invoke-RemoteAudit -HostName $target
 }
 function Invoke-FileEvidenceMenu {
     $path = (Read-Host 'Ruta del archivo a verificar').Trim('"')
@@ -199,6 +233,15 @@ if ($VirusTotal) {
 }
 if ($VirusTotal -and ($FullScan -or $ComputerName)) { throw '-VirusTotal solo admite busqueda, investigacion, archivo o captura local en esta version.' }
 $hasWindow = $PSBoundParameters.ContainsKey('StartTime') -or $PSBoundParameters.ContainsKey('EndTime')
+if ($DirectoryServer) {
+    if ($FindProcess -or $PIDToAudit -gt 0 -or $Monitor -or $ComputerName -or $FullScan -or $FilePath -or $hasWindow -or $VirusTotal) {throw '-DirectoryServer consulta solo inventario. Selecciona despues un host con -ComputerName o el menu.'}
+    $query=@{Server=$DirectoryServer;Protocol=$DirectoryProtocol;NameFilter=$DirectoryNameFilter;SearchBase=$SearchBase;EnabledOnly=$EnabledOnly;Port=$DirectoryPort;Authentication=$DirectoryAuthentication;MaxComputers=$MaxComputers}
+    if ($null -ne $DirectoryCredential) {$query.Credential=$DirectoryCredential}
+    $items=@(Get-WADirectoryComputers @query)
+    Show-Result ($items | Select-Object -First 100 Name,DNSHostName,OperatingSystem,Enabled)
+    Save-Report ([pscustomobject]@{Server=$DirectoryServer;Protocol=$DirectoryProtocol;Count=$items.Count;Computers=$items}) 'ad-inventory'
+    return
+}
 $from = if ($null -eq $StartTime) { if ($Monitor) {Get-Date} else {(Get-Date).AddHours(-24)} } else { ConvertTo-WADateTime $StartTime }
 $until = if ($null -eq $EndTime) { Get-Date } else { ConvertTo-WADateTime $EndTime }
 if ($until -le $from) { throw 'El fin debe ser posterior al inicio.' }
@@ -222,19 +265,19 @@ if ($Monitor -or $PIDToAudit -gt 0 -or ($FindProcess -and $hasWindow)) {
 if ($FindProcess) { Save-Report ([pscustomobject]@{Query=$FindProcess; CurrentProcesses=@(Invoke-LocalProcesses -Name $FindProcess)}) 'process-search'; return }
 if ($FullScan) { Save-Report ([pscustomobject]@{CurrentProcesses=@(Get-WAProcesses)}) 'local-processes'; return }
 if ($ComputerName) {
-    $credential = Get-Credential -Message 'Credenciales autorizadas para el equipo remoto'
-    $data = Invoke-Command -ComputerName $ComputerName -Credential $credential -ScriptBlock {
-        Get-CimInstance Win32_Process | Select-Object Name,ProcessId,ParentProcessId,ExecutablePath,CommandLine
-    }
-    Save-Report $data 'remote-processes'
+    $query=@{ComputerName=$ComputerName;UseSSL=$WinRMUseSSL;Port=$WinRMPort;Authentication=$WinRMAuthentication}
+    $query.Credential=if ($null -ne $RemoteCredential) {$RemoteCredential} else {Get-Credential -Message 'Credenciales autorizadas para WinRM'}
+    $data=@(Get-WARemoteProcesses @query)
+    Save-Report ([pscustomobject]@{ComputerName=$ComputerName;Transport='WinRM';UseSSL=[bool]$WinRMUseSSL;Processes=$data}) 'remote-processes'
     return
 }
+
 while ($true) {
     Show-Header
     Write-Host '  [1] Mostrar procesos locales'
     Write-Host '  [2] Consultar eventos historicos por PID o nombre'
     Write-Host '  [3] Inventario remoto de procesos (WinRM)'
-    Write-Host '  [4] Inventario de equipos de Active Directory'
+    Write-Host '  [4] Descubrir equipos por LDAP/LDAPS o RSAT y seleccionar WinRM'
     Write-Host '  [5] Inventario local completo + informe JSON'
     Write-Host '  [6] Buscar proceso activo por nombre (example.exe)'
     Write-Host '  [7] Capturar eventos hasta un horario futuro'

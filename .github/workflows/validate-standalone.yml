@@ -11,8 +11,11 @@ permissions:
 jobs:
   windows-tests:
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4, commit verificado
+        with:
+          persist-credentials: false
       - name: Canonical distribution bytes
         shell: pwsh
         run: |
@@ -25,12 +28,16 @@ jobs:
       - name: Windows PowerShell 5.1
         shell: powershell
         run: |
+          Write-Host $PSVersionTable.PSVersion
+          .\tests\Security.Tests.ps1
           .\tests\Features.Tests.ps1
           .\tests\Reputation.Tests.ps1
           .\tests\Directory.Tests.ps1
       - name: PowerShell 7
         shell: pwsh
         run: |
+          Write-Host $PSVersionTable.PSVersion
+          .\tests\Security.Tests.ps1
           .\tests\Features.Tests.ps1
           .\tests\Reputation.Tests.ps1
           .\tests\Directory.Tests.ps1
@@ -40,7 +47,7 @@ jobs:
           $file = 'dist/WinAudit-Standalone.ps1'
           $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
           [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), "$hash  WinAudit-Standalone.ps1`n", (New-Object Text.UTF8Encoding($false)))
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4, commit verificado
         with:
           name: WinAudit-standalone-tested
           path: |

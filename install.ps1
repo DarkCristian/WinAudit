@@ -271,8 +271,8 @@ function Invoke-WALaunchScript {
 function Invoke-WABootstrap {
     param([switch]$NonInteractive)
     if (-not (Initialize-WARuntimeSecurity -NonInteractive:$NonInteractive -DeferWindowsUpdate)) {return}
-    $source='https://raw.githubusercontent.com/DarkCristian/WinAudit/6e883047e3b11ba19e68bc19fc2f977f745842ec/dist/WinAudit-Standalone.ps1'
-    $expected='369a7d9518a240a4a81e76a2dd7acb05146be228eb4d8ad27c2c0e0100229f14'
+    $source='https://raw.githubusercontent.com/DarkCristian/WinAudit/c27df4f1a99fabbf13e7c0e8a588ff0c2b930f90/dist/WinAudit-Standalone.ps1'
+    $expected='00f203f1d5824b64c2ad56bb810a48126be6ee96587013ca96e8ae79ebd12368'
     $root=Join-Path ([IO.Path]::GetTempPath()) ('WinAudit-'+[guid]::NewGuid().ToString('N'))
     $lock=$null
     $created=$false

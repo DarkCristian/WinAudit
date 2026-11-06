@@ -12,6 +12,7 @@ param(
     [string]$FilePath,
     [ValidateSet('SHA256','MD5','Both')][string]$HashAlgorithm = 'SHA256',
     [switch]$VirusTotal,
+    [switch]$NonInteractive,
     [switch]$Monitor,
     [switch]$FullScan,
     [string]$ComputerName,
@@ -38,6 +39,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:Root = $PSScriptRoot
 Import-Module (Join-Path $script:Root 'Modules\Security.psm1') -Force
+Import-Module (Join-Path $script:Root 'Modules\Runtime.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Reputation.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Core.psm1') -Force
 Import-Module (Join-Path $script:Root 'Modules\Events.psm1') -Force
@@ -232,7 +234,7 @@ function Invoke-VirusTotalMenu {
         }
     }
 }
-Assert-WASupportedRuntime
+if (-not (Initialize-WARuntimeSecurity -NonInteractive:$NonInteractive)) {return}
 $script:vtContext=$null
 $script:vtAutomatic=$false
 if ($VirusTotal) {

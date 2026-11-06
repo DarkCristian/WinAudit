@@ -9,7 +9,7 @@ foreach ($fn in $ast.FindAll({param($n) $n -is [Management.Automation.Language.F
     . ([scriptblock]::Create($fn.Extent.Text))
 }
 $script:guardCalled=0;$script:launched=0;$script:tamper=$true
-function Assert-WASupportedRuntime {$script:guardCalled++}
+function Initialize-WARuntimeSecurity {param([switch]$NonInteractive,[switch]$DeferWindowsUpdate) $script:guardCalled++;return $true}
 function Invoke-WebRequest {
     param($Uri,$OutFile,[switch]$UseBasicParsing,$MaximumRedirection,$TimeoutSec,$ErrorAction)
     if ($Uri -notmatch '^https://raw\.githubusercontent\.com/DarkCristian/WinAudit/[a-f0-9]{40}/dist/WinAudit-Standalone\.ps1$') {throw 'Fuente no inmutable.'}

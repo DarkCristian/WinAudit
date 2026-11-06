@@ -9,7 +9,7 @@ if ($index -lt 0) { throw 'No se encontro el comienzo de la interfaz.' }
 $prefix = $entry.Substring(0,$index) -split '\r?\n' | Where-Object { $_ -notmatch '^Import-Module ' }
 $parts = New-Object 'System.Collections.Generic.List[string]'
 $parts.Add(($prefix -join "`n").TrimEnd())
-foreach ($name in @('Security','Reputation','Core','Events','Directory')) {
+foreach ($name in @('Security','Runtime','Reputation','Core','Events','Directory')) {
     $lines = Get-Content -LiteralPath (Join-Path $root "Modules/$name.psm1")
     $body = $lines | Where-Object { $_ -notmatch '^(Export-ModuleMember|Set-StrictMode) ' }
     $parts.Add(($body -join "`n").TrimEnd())

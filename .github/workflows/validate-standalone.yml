@@ -1,6 +1,7 @@
 name: Validate WinAudit
 on:
   push:
+    tags: ['v*']
     paths:
       - '**.ps1'
       - '**.psm1'
@@ -29,6 +30,7 @@ jobs:
         shell: powershell
         run: |
           Write-Host $PSVersionTable.PSVersion
+          .\tests\Runtime.Tests.ps1
           .\tests\Security.Tests.ps1
           .\tests\Bootstrap.Tests.ps1
           .\tests\Features.Tests.ps1
@@ -38,6 +40,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host $PSVersionTable.PSVersion
+          .\tests\Runtime.Tests.ps1
           .\tests\Security.Tests.ps1
           .\tests\Bootstrap.Tests.ps1
           .\tests\Features.Tests.ps1
@@ -56,3 +59,28 @@ jobs:
             dist/WinAudit-Standalone.ps1
             dist/SHA256SUMS.txt
           if-no-files-found: error
+
+  release-assets:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: windows-tests
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4, commit verificado
+        with:
+          name: WinAudit-standalone-tested
+          path: release-assets
+      - name: Attach tested assets to published release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.-]+)?$') { throw 'Invalid release tag.' }
+          gh release view $env:RELEASE_TAG --repo $env:GH_REPO
+          if ($LASTEXITCODE -ne 0) { throw 'Publish the release for this tag before uploading assets.' }
+          gh release upload $env:RELEASE_TAG 'release-assets/WinAudit-Standalone.ps1' 'release-assets/SHA256SUMS.txt' --repo $env:GH_REPO --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Release asset upload failed.' }

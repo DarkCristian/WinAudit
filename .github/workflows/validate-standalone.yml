@@ -1,4 +1,4 @@
-name: Validate WinAudit
+name: Validate and release WinAudit
 on:
   push:
     tags: ['v*']

@@ -6,7 +6,7 @@ WinAudit permite buscar procesos por PID o nombre, verificar firmas Authenticode
 
 > **v0.5.0-alpha — pre-release para pruebas.** Hay pruebas automatizadas con datos y conexiones simulados en Windows PowerShell 5.1 y PowerShell 7. Sigue pendiente la validación operativa con registros reales, un dominio, hosts remotos y una cuenta autorizada de VirusTotal. WinAudit no determina automáticamente si un proceso es malicioso.
 
-[Código corregido](dist/WinAudit-Standalone.ps1) · [Guía de uso](docs/USAGE.md) · [Modelo de seguridad y limitaciones](docs/SECURITY.md) · [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42142511491)
+[Código corregido](dist/WinAudit-Standalone.ps1) · [Guía de uso](docs/USAGE.md) · [Modelo de seguridad y limitaciones](docs/SECURITY.md) · [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42142809180)
 
 > **v0.5.0-alpha:** incluye las correcciones de seguridad, chequeo de PowerShell y actualización opcional con confirmación S/N. [Descargar release](https://github.com/DarkCristian/WinAudit/releases/tag/v0.5.0-alpha) · [Revisión y alcance](docs/SECURITY_REVIEW.md).
 
@@ -184,8 +184,10 @@ Las lecturas de archivo y los informes rechazan UNC, unidades de red, ADS y repa
 | Identificador | Valor |
 | --- | --- |
 | Release | [v0.5.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.5.0-alpha) |
+| Commit del tag v0.5.0-alpha | `ef414d3504cc1d7ba7e22daf83c0e818c6a034f5` |
 | Commit inmutable del standalone fijado por el launcher | `c27df4f1a99fabbf13e7c0e8a588ff0c2b930f90` |
 | SHA-256 de WinAudit-Standalone.ps1 | `00f203f1d5824b64c2ad56bb810a48126be6ee96587013ca96e8ae79ebd12368` |
+| SHA-256 de SHA256SUMS.txt | `9bf80b2e686126f1afc1c48e98a0f0380bea77a763efc199de273d5949c8fd53` |
 | Sumas de los assets | [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.5.0-alpha/SHA256SUMS.txt) |
 
 El commit fijado identifica los mismos bytes del standalone publicado; el tag incluye además el launcher actualizado y la documentación final. Comprobá el SHA-256 antes de ejecutar. La release v0.4.0-alpha es anterior a estas correcciones.

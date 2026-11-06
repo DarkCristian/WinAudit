@@ -4,11 +4,11 @@
 
 WinAudit permite buscar procesos por PID o nombre, verificar firmas Authenticode y hashes, consultar eventos históricos y capturar evidencia durante un intervalo. Genera informes locales y árboles de procesos; descubre equipos de Active Directory mediante LDAP/LDAPS o RSAT y consulta inventarios remotos mediante WinRM. VirusTotal es una integración avanzada, opcional y desactivada por defecto.
 
-> **v0.4.0-alpha — pre-release para pruebas.** Hay pruebas automatizadas con datos y conexiones simulados en Windows PowerShell 5.1 y PowerShell 7. Sigue pendiente la validación operativa con registros reales, un dominio, hosts remotos y una cuenta autorizada de VirusTotal. WinAudit no determina automáticamente si un proceso es malicioso.
+> **v0.5.0-alpha — pre-release para pruebas.** Hay pruebas automatizadas con datos y conexiones simulados en Windows PowerShell 5.1 y PowerShell 7. Sigue pendiente la validación operativa con registros reales, un dominio, hosts remotos y una cuenta autorizada de VirusTotal. WinAudit no determina automáticamente si un proceso es malicioso.
 
-[Código corregido](dist/WinAudit-Standalone.ps1) · [Guía de uso](docs/USAGE.md) · [Modelo de seguridad y limitaciones](docs/SECURITY.md) · [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225)
+[Código corregido](dist/WinAudit-Standalone.ps1) · [Guía de uso](docs/USAGE.md) · [Modelo de seguridad y limitaciones](docs/SECURITY.md) · [Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42142511491)
 
-> **Correcciones de seguridad en `main` (05/11/2026):** usá el código actual o el nuevo bootstrapper. El asset y el tag `v0.4.0-alpha` anteriores **no incluyen estos cambios**. [Revisión y alcance](docs/SECURITY_REVIEW.md).
+> **v0.5.0-alpha:** incluye las correcciones de seguridad, chequeo de PowerShell y actualización opcional con confirmación S/N. [Descargar release](https://github.com/DarkCristian/WinAudit/releases/tag/v0.5.0-alpha) · [Revisión y alcance](docs/SECURITY_REVIEW.md).
 
 ## Funciones y alcance
 
@@ -45,7 +45,7 @@ WinAudit no necesita compilación. No habilita WinRM, no modifica el firewall ni
 
 ### 1. Archivo independiente
 
-Para las correcciones de seguridad, descargá el [standalone revisado de main](dist/WinAudit-Standalone.ps1) y comprobá el SHA-256 indicado más abajo antes de ejecutarlo:
+Para las correcciones de seguridad, descargá el [standalone de v0.5.0-alpha](https://github.com/DarkCristian/WinAudit/releases/download/v0.5.0-alpha/WinAudit-Standalone.ps1) y comprobá el SHA-256 indicado más abajo antes de ejecutarlo:
 
 ```powershell
 .\WinAudit-Standalone.ps1
@@ -76,6 +76,10 @@ irm https://raw.githubusercontent.com/DarkCristian/WinAudit/main/install.ps1 | i
 Descarga un único standalone desde un commit inmutable, comprueba su SHA-256 fijado en el launcher y recién entonces inicia el menú. Rechaza una descarga alterada. Usa una carpeta temporal local y mantiene el archivo bloqueado contra escritura durante la ejecución; limpia al finalizar normalmente. No instala RSAT ni eleva privilegios.
 
 El primer `irm | iex` todavía confía en el launcher recibido de `main`: su hash interno no autentica al propio launcher. Para mayor control, descargá y revisá `install.ps1` antes de ejecutarlo o fijá una revisión aprobada. No se cambia la política de ejecución ni se omiten certificados.
+
+## PowerShell: aviso y actualización opcional
+
+Si detecta una versión conocida afectada, pregunta **S/N** antes de actualizar. Usa WinGet y, si no está disponible o falla, ofrece un MSI oficial con SHA-256 y firma Microsoft verificados. Tras el intento exige una sesión nueva. En Windows PowerShell 5.1 ofrece abrir Windows Update; no deduce las KB por el número de versión. Para automatizaciones usá `-NonInteractive`: no instala ni pregunta y detiene versiones conocidas afectadas. [Comportamiento, permisos y límites](docs/USAGE.md#chequeo-y-actualización-de-powershell).
 
 ## Menú
 
@@ -171,32 +175,21 @@ Una firma válida no garantiza seguridad; `NotSigned` no significa malicioso y `
 
 ## Revisión de seguridad de main
 
-El bootstrapper fija el standalone del commit `6e883047e3b11ba19e68bc19fc2f977f745842ec`, SHA-256 `369a7d9518a240a4a81e76a2dd7acb05146be228eb4d8ad27c2c0e0100229f14`. Incluye controles de rutas locales, rechazo de junctions/reparse points, XML sin DTD, saneamiento de pantalla y límites de consulta. Los JSON conservan la evidencia cruda.
+El bootstrapper fija el standalone del commit `c27df4f1a99fabbf13e7c0e8a588ff0c2b930f90`, SHA-256 `00f203f1d5824b64c2ad56bb810a48126be6ee96587013ca96e8ae79ebd12368`. Incluye controles de rutas locales, rechazo de junctions/reparse points, XML sin DTD, saneamiento de pantalla y límites de consulta. Los JSON conservan la evidencia cruda.
 
 Las lecturas de archivo y los informes rechazan UNC, unidades de red, ADS y reparse points. Eventos: `-MaxEventsPerLog` predeterminado 10000, máximo 100000 por registro/consulta; un recorte se marca `Limitado`. Ver [revisión de seguridad](docs/SECURITY_REVIEW.md).
 
-## Versión publicada anterior, SHA y validación
+## Versión, SHA y validación
 
 | Identificador | Valor |
 | --- | --- |
-| Release | [v0.4.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.4.0-alpha) |
-| Commit del tag (SHA-1 de Git) | `c2375ea6f57602dc0e74ab6518d16eda300de673` |
-| Blob Git del standalone | `74e3279018772eed9cc09e561c6310aa3bde5f73` |
-| SHA-256 de `WinAudit-Standalone.ps1` | `ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875` |
-| Archivo de sumas | [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.4.0-alpha/SHA256SUMS.txt) |
-| SHA-256 del propio archivo de sumas | `82806d09aacb94740903a2553b9922ff912b0b507caf274652f690a52b6a9d6e` |
+| Release | [v0.5.0-alpha](https://github.com/DarkCristian/WinAudit/releases/tag/v0.5.0-alpha) |
+| Commit inmutable del standalone fijado por el launcher | `c27df4f1a99fabbf13e7c0e8a588ff0c2b930f90` |
+| SHA-256 de WinAudit-Standalone.ps1 | `00f203f1d5824b64c2ad56bb810a48126be6ee96587013ca96e8ae79ebd12368` |
+| Sumas de los assets | [SHA256SUMS.txt](https://github.com/DarkCristian/WinAudit/releases/download/v0.5.0-alpha/SHA256SUMS.txt) |
 
-Los SHA-1 identifican objetos Git; el SHA-256 verifica los bytes del asset. Podés comprobarlo sin ejecutarlo:
+El commit fijado identifica los mismos bytes del standalone publicado; el tag incluye además el launcher actualizado y la documentación final. Comprobá el SHA-256 antes de ejecutar. La release v0.4.0-alpha es anterior a estas correcciones.
 
-```powershell
-$esperado = 'ae1faec8d0e407f8c56b4f35637a390ff1b9e1c130cd3af3b6d11a6afec34875'
-$obtenido = (Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256).Hash
-if ($obtenido -ine $esperado) { throw 'SHA-256 distinto del publicado.' }
-```
-
-[Workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225): sintaxis, ensamblado, fechas, eventos sintéticos, captura, árbol, hashes, VirusTotal simulado y pruebas de LDAP/LDAPS/RSAT/WinRM simulados, en PowerShell 5.1 y 7. El artefacto incluye el standalone probado y su checksum. También se validan controles de seguridad y rechazo del bootstrapper ante una descarga alterada. Esto no sustituye la validación contra sistemas reales autorizados.
-
-El asset anterior se conserva como referencia histórica; no contiene las correcciones de seguridad de `main`. No se publicó una nueva release en esta revisión.
 
 ## Documentación y licencia
 

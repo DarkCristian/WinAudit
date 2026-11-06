@@ -1,6 +1,6 @@
 # Guía de uso
 
-Referencia de **main con correcciones de seguridad del 05/11/2026**, posteriores a v0.4.0-alpha. El tag y el asset anteriores no incluyen estas correcciones. Los comandos usan `WinAudit.ps1` desde el repositorio. Para el archivo independiente, reemplazá ese nombre por `WinAudit-Standalone.ps1`. Requieren Windows actualizado y Windows PowerShell 5.1, o una rama estable de PowerShell 7 con mínimo 7.4.21, 7.5.12 o 7.6.7 respectivamente. Ramas anteriores se rechazan. WinAudit no instala parches de Windows ni verifica su nivel de actualización.
+Referencia de **v0.5.0-alpha**, con correcciones de seguridad y actualización opcional del runtime. v0.4.0-alpha no incluye estos cambios. Los comandos usan `WinAudit.ps1` desde el repositorio. Para el archivo independiente, reemplazá ese nombre por `WinAudit-Standalone.ps1`. Requieren Windows actualizado y Windows PowerShell 5.1, o una rama estable de PowerShell 7 con mínimo 7.4.21, 7.5.12 o 7.6.7 respectivamente. Ramas anteriores se rechazan. WinAudit no instala parches de Windows ni verifica su nivel de actualización.
 
 [Volver al README](../README.md) · [Modelo de seguridad y limitaciones](SECURITY.md)
 
@@ -23,14 +23,39 @@ El bootstrapper abre el menú, sin reenviar parámetros. Descarga un standalone 
 SHA-256 del standalone corregido fijado por el bootstrapper:
 
 ```text
-369a7d9518a240a4a81e76a2dd7acb05146be228eb4d8ad27c2c0e0100229f14
+00f203f1d5824b64c2ad56bb810a48126be6ee96587013ca96e8ae79ebd12368
 ```
 
 ```powershell
 Get-FileHash -LiteralPath '.\WinAudit-Standalone.ps1' -Algorithm SHA256
 ```
 
-Compará con el valor anterior para la revisión `6e883047e3b11ba19e68bc19fc2f977f745842ec`. Las sumas del asset v0.4.0-alpha corresponden al código anterior y son distintas. No cambies políticas de ejecución o protecciones para resolver un bloqueo sin conocer la política de tu entorno.
+Compará con el valor anterior para la revisión `c27df4f1a99fabbf13e7c0e8a588ff0c2b930f90`. Las sumas del asset v0.4.0-alpha corresponden al código anterior y son distintas. No cambies políticas de ejecución o protecciones para resolver un bloqueo sin conocer la política de tu entorno.
+
+
+## Chequeo y actualización de PowerShell
+
+Antes de auditar se compara la versión con mínimos locales revisados: 7.4.21, 7.5.12 y 7.6.7 según la rama. No se consulta una base CVE en vivo; estar por encima del mínimo no certifica ausencia de otras vulnerabilidades. Ramas antiguas y previews se rechazan; una rama estable posterior a 7.6 advierte que no fue evaluada.
+
+Si PowerShell 7 está afectado, muestra un aviso breve con CVE y pregunta S/N. N, Enter o un error de entrada detienen la auditoría sin descargar ni instalar. S intenta `winget upgrade --id Microsoft.PowerShell --exact --source winget --interactive`, usando el WinGet de App Installer con firma Microsoft válida. No acepta acuerdos ni omite hashes automáticamente; UAC y diálogos del proveedor quedan a cargo del operador. No ejecuta un winget.exe arbitrario de PATH.
+
+Si WinGet falta o falla, solicita otro S/N para el MSI oficial. Consulta la última release estable de `PowerShell/PowerShell`, elige la arquitectura del SO y exige URL oficial, SHA-256 del asset y Authenticode válido de Microsoft. Si falta un MSI/digest o no puede validarse, cancela y muestra la guía oficial. No instala previews ni fuentes alternativas. El MSI es interactivo, sin reinicio automático, habilita Microsoft Update (`USE_MU=1`, `ENABLE_MU=1`) y no habilita remoting (`ENABLE_PSREMOTING=0`). Respeta la decisión UAC y políticas del entorno; no las modifica para forzar la instalación.
+
+Después de cualquier intento de actualización termina este intento de auditoría. Comprueba si existe un binario Microsoft firmado con versión corregida en ubicaciones conocidas (MSI/MSIX); no afirma éxito si no puede verificarlo. La sesión actual conserva su versión: abrí PowerShell actualizado y ejecutá WinAudit nuevamente. Si usabas una copia ZIP o .NET global tool, esta puede seguir antigua aunque otra instalación se haya actualizado. No se migran argumentos, claves o credenciales a una sesión nueva.
+
+Windows PowerShell 5.1 recibe parches mediante Windows Update. El número de versión no confirma las KB: se muestra esa limitación y se ofrece abrir Windows Update con S/N. Si aceptás, termina la auditoría para que completes allí la actualización. Si rechazás, continúa con advertencia, sin afirmar que Windows esté parcheado. No instala todas las KB ni fuerza reinicios. Un equipo sin la interfaz de Windows Update debe usar el método aprobado por su organización.
+
+Para automatizaciones y terminales sin entrada:
+
+```powershell
+.\WinAudit.ps1 -FullScan -NonInteractive
+```
+
+`-NonInteractive` evita preguntas, descargas e instalaciones del asistente. Una versión conocida afectada/no admitida detiene la auditoría; 5.1 continúa con advertencia de KB no verificadas. El menú principal sigue siendo interactivo: usá un modo de auditoría por parámetros para ejecución desatendida.
+
+El bootstrapper incluye este asistente antes de descargar el standalone, y difiere el aviso de Windows Update 5.1 al script principal para no preguntarlo dos veces. El primer `irm | iex` sigue confiando en el launcher remoto.
+
+Fuentes oficiales: [Instalar/actualizar PowerShell](https://learn.microsoft.com/powershell/scripting/install/install-powershell-on-windows), [Microsoft Update](https://learn.microsoft.com/powershell/scripting/install/microsoft-update-faq).
 
 ## Menú y permisos
 
@@ -362,6 +387,7 @@ No hay compilación de aplicación:
 ```powershell
 .\tools\Build-Standalone.ps1
 .\tools\Build-Standalone.ps1 -Check
+.\tests\Runtime.Tests.ps1
 .\tests\Security.Tests.ps1
 .\tests\Bootstrap.Tests.ps1
 .\tests\Features.Tests.ps1
@@ -369,4 +395,4 @@ No hay compilación de aplicación:
 .\tests\Directory.Tests.ps1
 ```
 
-El [workflow aprobado de la revisión de seguridad](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225) ejecuta las pruebas en PowerShell 5.1 y 7 y genera un artefacto con bytes canónicos y SHA-256. Las pruebas usan datos sintéticos y sustituyen las conexiones de VirusTotal, LDAP/LDAPS, RSAT y WinRM. No validan un certificado, dominio, permisos o respuesta real de esos servicios.
+El [workflow aprobado de la revisión de seguridad](https://github.com/DarkCristian/WinAudit/actions/runs/42142511491) ejecuta las pruebas en PowerShell 5.1 y 7 y genera un artefacto con bytes canónicos y SHA-256. Las pruebas usan datos sintéticos y sustituyen las conexiones de VirusTotal, LDAP/LDAPS, RSAT y WinRM. No validan un certificado, dominio, permisos o respuesta real de esos servicios.

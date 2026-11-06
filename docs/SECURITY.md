@@ -1,6 +1,6 @@
 # Modelo de seguridad y limitaciones
 
-Referencia de **main revisado el 05/11/2026**, posterior a v0.4.0-alpha. El asset anterior no incorpora estas correcciones. WinAudit es una herramienta de consulta y recopilación de evidencia para Windows. No es un antivirus, EDR ni una herramienta completa de adquisición forense.
+Referencia de **v0.5.0-alpha**. El asset anterior v0.4.0-alpha no incorpora estas correcciones. WinAudit es una herramienta de consulta y recopilación de evidencia para Windows. No es un antivirus, EDR ni una herramienta completa de adquisición forense.
 
 [Volver al README](../README.md) · [Guía de uso](USAGE.md)
 
@@ -10,7 +10,7 @@ WinAudit consulta procesos, archivos, registros y directorios que el operador es
 
 El modo de consulta no significa ausencia absoluta de cambios: se escriben informes locales; el bootstrapper descarga y elimina componentes temporales; la ejecución, autenticación y lectura pueden generar registros del propio sistema. El instalador opcional `Install-Prerequisites.ps1 -Install` sí agrega un componente de Windows cuando el operador lo ejecuta explícitamente.
 
-No se aplican remediaciones automáticas. Las recomendaciones o estadísticas no reemplazan el análisis de un operador.
+La auditoría no aplica remediaciones a procesos o políticas. El asistente opcional sí puede actualizar PowerShell con confirmación del operador; el instalador puede modificar archivos del runtime, PATH y la integración Microsoft Update según sus opciones. Las recomendaciones o estadísticas no reemplazan el análisis de un operador.
 
 ## Autorización y credenciales
 
@@ -132,7 +132,7 @@ El tag v0.4.0-alpha y sus assets permanecen fijados a la publicación. Corregir 
 
 ## Estado de validación
 
-El [workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42119062225) valida sintaxis, ensamblado y bytes del standalone, fechas, búsquedas, eventos sintéticos, captura, árbol, hashes, errores y opt-in de reputación, LDAP/LDAPS/RSAT y WinRM con respuestas simuladas, en PowerShell 5.1 y 7.
+El [workflow aprobado](https://github.com/DarkCristian/WinAudit/actions/runs/42142511491) valida sintaxis, ensamblado y bytes del standalone, fechas, búsquedas, eventos sintéticos, captura, árbol, hashes, errores y opt-in de reputación, LDAP/LDAPS/RSAT y WinRM con respuestas simuladas, en PowerShell 5.1 y 7.
 
 No constituye una prueba contra un DC real, validación de certificados de una organización, prueba de permisos remotos ni consulta real a VirusTotal. Esas pruebas operativas siguen pendientes en un entorno autorizado. Esta versión conserva el estado Alpha.
 
@@ -159,3 +159,9 @@ El XML de eventos usa XmlReader con DTD prohibido, resolver nulo y máximo de 4 
 Las consultas de eventos tienen tope por registro/lectura (10000 predeterminado, 100000 máximo), retienen primero los más recientes y explicitan el estado Limitado. No limitan todo el consumo de disco de una captura larga. LDAP directo limita páginas además de equipos y timeout; un exceso falla explícitamente.
 
 Se rechazan ramas antiguas de PowerShell 7 y versiones anteriores a 7.4.21 / 7.5.12 / 7.6.7 según la rama. PowerShell 5.1 requiere Windows actualizado: su número de versión no demuestra que estén instaladas todas las KB. Una rama posterior a 7.6 genera advertencia porque no fue evaluada en este relevamiento. Estos controles no parchean Windows, .NET ni PowerShell y no garantizan ausencia de vulnerabilidades futuras.
+
+## Actualización opcional del runtime
+
+El asistente requiere confirmación S/N, con N/Enter como rechazo. No instala silenciosamente al iniciar y no descarga nada del asistente con `-NonInteractive`. WinGet se restringe al paquete Microsoft.PowerShell y al origen winget; el fallback MSI exige URL oficial, hash SHA-256 y firma Microsoft válida antes de ejecutar. No reinicia, cambia políticas de ejecución ni desactiva validaciones. El MSI puede habilitar Microsoft Update y actualizar PATH según la instalación. La sesión antigua no se reutiliza para auditar tras el intento. [Flujo y limitaciones](USAGE.md#chequeo-y-actualización-de-powershell).
+
+Los mínimos CVE son una lista local revisada; no son un servicio de detección de todas las CVE. No se prueba aquí la instalación real sobre equipos del operador. Las pruebas simulan WinGet, metadatos HTTP, MSI y Windows Update y validan rechazo sin consentimiento y de integridad inválida.
